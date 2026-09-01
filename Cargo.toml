@@ -1,0 +1,9 @@
+[package]
+name = "forja"
+version = "0.1.0"
+edition = "2021"
+description = "FORJA-256: Post-quantum AI-native 256-bit processor architecture"
+license = "MIT"
+
+# Zero dependencies. Pure Rust. Bare-metal spirit.
+[dependencies]

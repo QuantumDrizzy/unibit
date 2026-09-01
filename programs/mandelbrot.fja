@@ -1,0 +1,107 @@
+; ============================================================================
+; FORJA-256 — ASCII Mandelbrot Fractal Generator
+; ============================================================================
+;
+; Computes the Mandelbrot set in fixed-point arithmetic (scale 256)
+; Rendering a 60x22 character ASCII fractal on the FORJA-256 processor core!
+; ============================================================================
+
+        .data
+title:    .asciiz "\n=== FORJA-256: Mandelbrot Set (ASCII Render) ===\n\n"
+char_nl:  .asciiz "\n"
+
+        .text
+        .global _start
+
+_start:
+        la    a0, title
+        li    a1, 52
+        li    a7, 3          ; print_str
+        ecall
+
+        ; y loop: y from -10 to 10 (21 rows)
+        li    s0, -10        ; s0 = y
+
+y_loop:
+        li    t0, 11
+        bge   s0, t0, finish
+
+        ; x loop: x from -35 to 18 (54 cols)
+        li    s1, -35        ; s1 = x
+
+x_loop:
+        li    t0, 19
+        bge   s1, t0, next_y
+
+        ; c_re = (x * 230) / 32  (fixed point 8.8 approx)
+        li    t0, 230
+        mul   t1, s1, t0
+        li    t0, 32
+        div   s2, t1, t0     ; s2 = c_re
+
+        ; c_im = (y * 480) / 32
+        li    t0, 480
+        mul   t1, s0, t0
+        li    t0, 32
+        div   s3, t1, t0     ; s3 = c_im
+
+        ; z_re = 0, z_im = 0, iter = 0
+        li    s4, 0          ; s4 = z_re
+        li    s5, 0          ; s5 = z_im
+        li    s6, 0          ; s6 = iter
+        li    s7, 16         ; max_iter = 16
+
+mandel_iter:
+        bge   s6, s7, is_inside
+
+        ; zr2 = (z_re * z_re) >> 8
+        mul   t1, s4, s4
+        srai  s8, t1, 8      ; s8 = zr2
+
+        ; zi2 = (z_im * z_im) >> 8
+        mul   t1, s5, s5
+        srai  s9, t1, 8      ; s9 = zi2
+
+        ; if (zr2 + zi2 > 1024) escaped!
+        add   t1, s8, s9
+        li    t2, 1024
+        bge   t1, t2, is_escaped
+
+        ; z_im = ((z_re * z_im) >> 7) + c_im
+        mul   t1, s4, s5
+        srai  t2, t1, 7
+        add   s5, t2, s3
+
+        ; z_re = zr2 - zi2 + c_re
+        sub   t1, s8, s9
+        add   s4, t1, s2
+
+        addi  s6, s6, 1
+        j     mandel_iter
+
+is_inside:
+        li    a0, 35         ; '#'
+        li    a7, 2          ; print_char
+        ecall
+        j     next_x
+
+is_escaped:
+        li    a0, 32         ; ' '
+        li    a7, 2
+        ecall
+
+next_x:
+        addi  s1, s1, 1
+        j     x_loop
+
+next_y:
+        la    a0, char_nl
+        li    a1, 1
+        li    a7, 3          ; print_str '\n'
+        ecall
+
+        addi  s0, s0, 1
+        j     y_loop
+
+finish:
+        halt

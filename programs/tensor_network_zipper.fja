@@ -1,0 +1,65 @@
+; ============================================================================
+; FORJA-256 — Tensor-Network Hardware Zipper Contraction (Blaze Native)
+; ============================================================================
+;
+; Implements the Blaze MPS Zipper Contraction in hardware instructions:
+; Calculates <psi_A | psi_B> overlap step directly on low-rank TT cores
+; using the native `zipper` instruction, without decompressing dense state!
+; ============================================================================
+
+        .data
+title:  .asciiz "\n=== FORJA-256: Tensor-Network Hardware Zipper (Blaze Engine) ===\n"
+msg_e0: .asciiz "[Step 1] Initializing MPS Transfer Matrix E = 1.0 + 0.0i (Boundary)\n"
+msg_z1: .asciiz "[Step 2] Executing Hardware `zipper` Instruction on Tensor-Train Cores...\n"
+msg_res:.asciiz "[Step 3] Contracted Overlap State Register:\n         "
+msg_ok: .asciiz "\n[OK] Zero-Decompression MPS Overlap Step Completed in Hardware Pipeline!\n"
+nl:     .asciiz "\n"
+
+        .text
+        .global _start
+
+_start:
+        la    a0, title
+        li    a1, 65
+        li    a7, 3          ; print_str
+        ecall
+
+        la    a0, msg_e0
+        li    a1, 67
+        li    a7, 3
+        ecall
+
+        ; 1. Set Transfer Matrix E in s0 = [1.0 + 0.0i]
+        ; 1.0f64 bits = 0x3FF0000000000000
+        li    t0, 0x3FF0000000000000
+        mv    s0, t0         ; s0 = Transfer Matrix E boundary
+
+        ; 2. Define TT Core B in s1 and TT Core A in s2
+        ; s1 (Core B) = [1.0 + 0.0i, 0.0 + 0.0i]
+        mv    s1, t0
+        ; s2 (Core A) = [1.0 + 0.0i, 0.0 + 0.0i]
+        mv    s2, t0
+
+        la    a0, msg_z1
+        li    a1, 71
+        li    a7, 3
+        ecall
+
+        ; 3. Execute Hardware Zipper Contraction: E_next = zipper(E, B, A)
+        zipper s0, s1, s2
+
+        la    a0, msg_res
+        li    a1, 52
+        li    a7, 3
+        ecall
+
+        li    a0, 8          ; print s0 (reg 8)
+        li    a7, 20         ; print_reg256
+        ecall
+
+        la    a0, msg_ok
+        li    a1, 73
+        li    a7, 3
+        ecall
+
+        halt

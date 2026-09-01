@@ -1,0 +1,62 @@
+; ============================================================================
+; FORJA-256 — Fibonacci Sequence Benchmark
+; ============================================================================
+
+        .data
+title:  .asciiz "» FORJA-256: Computing Fibonacci Numbers:\n"
+comma:  .asciiz ", "
+nl:     .asciiz "\n"
+
+        .text
+        .global _start
+
+_start:
+        la    a0, title
+        li    a1, 42
+        li    a7, 3          ; print_str
+        ecall
+
+        li    s1, 0          ; F(0)
+        li    s2, 1          ; F(1)
+        li    t0, 25         ; N = 25 iterations
+
+        ; Print initial 0, 1
+        mv    a0, s1
+        li    a7, 1          ; print_int
+        ecall
+        la    a0, comma
+        li    a1, 2
+        li    a7, 3
+        ecall
+
+        mv    a0, s2
+        li    a7, 1
+        ecall
+        la    a0, comma
+        li    a1, 2
+        li    a7, 3
+        ecall
+
+loop:
+        beq   t0, zero, exit
+        add   t1, s1, s2     ; t1 = F(n)
+        mv    s1, s2         ; s1 = F(n-1)
+        mv    s2, t1         ; s2 = F(n)
+
+        mv    a0, s2
+        li    a7, 1          ; print_int
+        ecall
+        la    a0, comma
+        li    a1, 2
+        li    a7, 3
+        ecall
+
+        addi  t0, t0, -1
+        j     loop
+
+exit:
+        la    a0, nl
+        li    a1, 1
+        li    a7, 3
+        ecall
+        halt
