@@ -108,6 +108,35 @@ There *was* a real bug here, fixed and regression-tested: `update()` indexed the
 BHT by the destination PC instead of the branch PC, so it never learned. Mandelbrot
 predicted at 3.34 % and IPC sat at 0.71. Both numbers moved to the values above.
 
+### What three real workloads cost this ISA
+
+Three inner loops taken from workloads that exist outside this project, written in
+Unibit assembly and measured: quantised LLM decode ([`llm_matvec.uasm`](programs/llm_matvec.uasm)),
+Ising machine energy ([`ising_energy.uasm`](programs/ising_energy.uasm)) and a
+256-site tensor-network contraction ([`mps_chain.uasm`](programs/mps_chain.uasm)).
+
+| Kernel | Instructions | Flops/instruction | % of ceiling |
+|---|---:|---:|---:|
+| `llm_matvec` | 33 741 | 13.60 | 85 % |
+| `ising_energy` | 12 599 | 10.48 | 66 % |
+| `mps_chain` | 942 | **69.57** | 82 % |
+
+`VDOT.B` retires 64 flops per instruction — the same density as AVX2's
+`VPMADDUBSW` on the Xeon this is emulated on, because both are 256-bit vectors
+doing int8 MACs. Width buys nothing there. `ZIPPER2` retires **256**, because it
+fuses an entire bond-dimension-2 contraction into one instruction, and that is the
+only place this ISA is genuinely ahead of an existing one.
+
+The Ising kernel sits at 66 % because the ISA has no int8 × int64 dot product, so
+its middle contraction falls off the vector path to 0.25 flops per instruction.
+That is a real hole the measurement found, and it would cost one opcode to close.
+
+Measured against the same machine's silicon, the GPU **loses two of the three** —
+but the host numbers turn out to be 97 % framework dispatch overhead, so the
+comparison does not support a throughput claim and none is made.
+
+Full study, method, host reference and limits: **[docs/kernel-cost.md](docs/kernel-cost.md)**.
+
 ### Throughput
 
 ![Emulator throughput](docs/img/throughput.svg)

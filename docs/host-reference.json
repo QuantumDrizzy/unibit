@@ -1,0 +1,53 @@
+{
+  "host": {
+    "cpu": "Intel64 Family 6 Model 79 Stepping 1, GenuineIntel",
+    "logical_cores": 32,
+    "gpu": "NVIDIA GeForce RTX 5060 Ti sm_120 36 SMs",
+    "cpu_read_gbs": 39.88103968255807,
+    "gpu_read_gbs": 384.94660300453313
+  },
+  "kernels": [
+    {
+      "kernel": "int8 matvec",
+      "device": "CPU int32",
+      "seconds": 0.00017175700049847363,
+      "gflops": 2.670936256854793
+    },
+    {
+      "kernel": "int8 matvec",
+      "device": "GPU fp16",
+      "seconds": 4.824033395076792e-05,
+      "gflops": 9.50971857840336
+    },
+    {
+      "kernel": "int8 matvec",
+      "device": "GPU fp32",
+      "seconds": 4.554366615290443e-05,
+      "gflops": 10.072794721000832
+    },
+    {
+      "kernel": "Ising energy n=256",
+      "device": "CPU int32",
+      "seconds": 5.978449946269393e-05,
+      "gflops": 2.209535936358037
+    },
+    {
+      "kernel": "Ising energy n=256",
+      "device": "GPU fp32",
+      "seconds": 0.00019774033299957712,
+      "gflops": 0.6680275996110642
+    },
+    {
+      "kernel": "MPS chain 256 sites",
+      "device": "CPU complex64",
+      "seconds": 0.0026920000091195107,
+      "gflops": 0.02434472502897029
+    },
+    {
+      "kernel": "MPS chain 256 sites",
+      "device": "GPU complex64",
+      "seconds": 0.09011487998068332,
+      "gflops": 0.0007272494843698183
+    }
+  ]
+}

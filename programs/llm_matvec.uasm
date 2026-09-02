@@ -1,0 +1,125 @@
+; ============================================================================
+; Unibit — int8 quantised matrix-vector product
+; ============================================================================
+;
+; The inner loop of quantised LLM decode: y[i] = sum_j W[i][j] * x[j], with W
+; and x both int8. This is where a decode step spends essentially all of its
+; time — one matvec per projection, per layer, per token.
+;
+; The point is not wall-clock speed. This is an emulator, so wall time measures
+; the emulator. What it measures honestly is the ARCHITECTURAL cost: how many
+; instructions this ISA needs per multiply-accumulate, and therefore what a real
+; implementation would have to retire per token.
+;
+; The primitive is VDOT.B: 32 int8 multiply-accumulates in one instruction over a
+; 256-bit register pair. Its cost is independent of the operand values, so the
+; arrays are left zeroed — instruction and cycle counts are identical either way,
+; and filling 229 KB of test data from assembly would only add noise.
+;
+; Shape: 64 rows x 3584 columns. 3584 is the hidden size of Qwen2.5-Coder-7B, so
+; one row is one real output element of one real projection.
+;
+; Written for instruction efficiency, and the two things that mattered are worth
+; naming because they are what the measurement is for:
+;
+;   1. Loop bounds are hoisted. Reloading `li t6, N` inside the loop cost two
+;      instructions per iteration and nothing else.
+;   2. The inner loop is unrolled 8x, so one pointer update and one branch are
+;      amortised over eight VDOT.B instead of one.
+;
+; Together those moved the kernel from 11.43 to 13.60 flops per instruction, 85%
+; of the ISA ceiling of 16 — which is what is left when the only instructions in
+; the loop are the two loads, the VDOT.B and the accumulate.
+
+        .data
+
+x_vec:  .zero 3584              ; activation vector, int8
+w_mat:  .zero 229376            ; 64 x 3584 int8 weights, row-major
+y_vec:  .zero 512               ; 64 x i64 accumulators
+
+msg_t:  .asciiz "=== Unibit: int8 quantised matvec (64 x 3584) ===\n"
+msg_d:  .asciiz "[done] 229376 int8 multiply-accumulates retired\n"
+
+        .text
+        .global _start
+
+_start:
+        la      a0, msg_t
+        li      a7, 6
+        ecall
+
+        ; ── loop bounds, hoisted out of both loops ──
+        li      s7, 64              ; ROWS
+        li      s8, 14              ; 3584 / (32 lanes * 8 unrolled)
+
+        la      s0, w_mat           ; s0 = walking pointer into W
+        la      s3, y_vec           ; s3 = walking pointer into y
+        li      s4, 0               ; s4 = row index
+
+row_loop:
+        bge     s4, s7, done
+
+        la      s2, x_vec           ; s2 = walking pointer into x, reset per row
+        li      s6, 0               ; s6 = accumulator for this row
+        li      s5, 0               ; s5 = column block index
+
+col_loop:
+        bge     s5, s8, row_store
+
+        ; ── 8 x (load 256-bit W, load 256-bit x, 32 int8 MACs, accumulate) ──
+        lq      t0, 0(s0)
+        lq      t1, 0(s2)
+        vdot.b  t2, t0, t1
+        add     s6, s6, t2
+
+        lq      t0, 32(s0)
+        lq      t1, 32(s2)
+        vdot.b  t2, t0, t1
+        add     s6, s6, t2
+
+        lq      t0, 64(s0)
+        lq      t1, 64(s2)
+        vdot.b  t2, t0, t1
+        add     s6, s6, t2
+
+        lq      t0, 96(s0)
+        lq      t1, 96(s2)
+        vdot.b  t2, t0, t1
+        add     s6, s6, t2
+
+        lq      t0, 128(s0)
+        lq      t1, 128(s2)
+        vdot.b  t2, t0, t1
+        add     s6, s6, t2
+
+        lq      t0, 160(s0)
+        lq      t1, 160(s2)
+        vdot.b  t2, t0, t1
+        add     s6, s6, t2
+
+        lq      t0, 192(s0)
+        lq      t1, 192(s2)
+        vdot.b  t2, t0, t1
+        add     s6, s6, t2
+
+        lq      t0, 224(s0)
+        lq      t1, 224(s2)
+        vdot.b  t2, t0, t1
+        add     s6, s6, t2
+
+        addi    s0, s0, 256         ; advance both pointers by 8 x 32 bytes
+        addi    s2, s2, 256
+        addi    s5, s5, 1
+        j       col_loop
+
+row_store:
+        sd      s6, 0(s3)           ; y[i] = accumulator
+        addi    s3, s3, 8
+        addi    s4, s4, 1
+        j       row_loop
+
+done:
+        la      a0, msg_d
+        li      a7, 6
+        ecall
+        halt

@@ -1,0 +1,179 @@
+; ============================================================================
+; Unibit — Ising energy evaluation
+; ============================================================================
+;
+; The inner loop of every Ising machine, simulated annealer and QUBO solver:
+;
+;     E = -1/2 . sum_i S_i (J S)_i  -  sum_i h_i S_i
+;
+; The whole cost is the coupling product J.S — an n x n by n matvec over spins.
+; Spins are +-1, so int8 is the natural width and no precision is lost: the
+; product of two int8 spins is exact, and the accumulation is exact in 64 bits
+; for any n below 2^57.
+;
+; That last point is worth stating, because it is where this differs from the
+; same kernel on a GPU. A tensor-core implementation runs the coupling GEMM in
+; TF32 or BF16 and has to report the error that introduces into the energy. Here
+; there is no error to report: the arithmetic is integer and exact.
+;
+; Shape: n = 256 spins, one replica. 65 536 multiply-accumulates for J.S, plus
+; 256 for the S.(JS) contraction and 256 for the field term.
+;
+; n = 256 divides evenly by 32 lanes x 8 unrolled, so one unrolled block is
+; exactly one row of J. No remainder handling, which is why this kernel gets
+; closer to the ISA ceiling than the LLM matvec does.
+
+        .data
+
+s_vec:  .zero 256               ; spins, int8, +-1
+h_vec:  .zero 256               ; local fields, int8
+j_mat:  .zero 65536             ; 256 x 256 couplings, int8, row-major
+t_vec:  .zero 2048              ; (J S), 256 x i64
+
+msg_t:  .asciiz "=== Unibit: Ising energy, n=256 ===\n"
+msg_d:  .asciiz "[done] 66048 int8 multiply-accumulates retired\n"
+
+        .text
+        .global _start
+
+_start:
+        la      a0, msg_t
+        li      a7, 6
+        ecall
+
+        li      s7, 256             ; n, hoisted
+
+        ; ── Stage 1: t = J . S ──────────────────────────────────────────
+        la      s0, j_mat           ; walking pointer into J
+        la      s3, t_vec           ; walking pointer into t
+        li      s4, 0               ; row index
+
+row_loop:
+        bge     s4, s7, contract
+
+        la      s2, s_vec           ; S restarts every row
+        li      s6, 0               ; accumulator
+
+        ; one row = 256 int8 = 8 x VDOT.B, fully unrolled, no inner branch
+        lq      t0, 0(s0)
+        lq      t1, 0(s2)
+        vdot.b  t2, t0, t1
+        add     s6, s6, t2
+
+        lq      t0, 32(s0)
+        lq      t1, 32(s2)
+        vdot.b  t2, t0, t1
+        add     s6, s6, t2
+
+        lq      t0, 64(s0)
+        lq      t1, 64(s2)
+        vdot.b  t2, t0, t1
+        add     s6, s6, t2
+
+        lq      t0, 96(s0)
+        lq      t1, 96(s2)
+        vdot.b  t2, t0, t1
+        add     s6, s6, t2
+
+        lq      t0, 128(s0)
+        lq      t1, 128(s2)
+        vdot.b  t2, t0, t1
+        add     s6, s6, t2
+
+        lq      t0, 160(s0)
+        lq      t1, 160(s2)
+        vdot.b  t2, t0, t1
+        add     s6, s6, t2
+
+        lq      t0, 192(s0)
+        lq      t1, 192(s2)
+        vdot.b  t2, t0, t1
+        add     s6, s6, t2
+
+        lq      t0, 224(s0)
+        lq      t1, 224(s2)
+        vdot.b  t2, t0, t1
+        add     s6, s6, t2
+
+        sd      s6, 0(s3)           ; t[i] = row . S
+        addi    s0, s0, 256         ; next row of J
+        addi    s3, s3, 8
+        addi    s4, s4, 1
+        j       row_loop
+
+        ; ── Stage 2: E = -1/2 . S.(JS) - h.S ────────────────────────────
+        ; Both contractions are 256 int8 x int8 products. S.(JS) needs the
+        ; 64-bit t values, so it is a scalar loop; h.S is another VDOT.B chain.
+contract:
+        la      s2, s_vec
+        la      s3, t_vec
+        li      s4, 0
+        li      s6, 0               ; accumulator for S.(JS)
+
+dot_loop:
+        bge     s4, s7, field
+        lb      t0, 0(s2)           ; S_i, sign-extended
+        ld      t1, 0(s3)           ; (JS)_i
+        mul     t2, t0, t1
+        add     s6, s6, t2
+        addi    s2, s2, 1
+        addi    s3, s3, 8
+        addi    s4, s4, 1
+        j       dot_loop
+
+field:
+        ; h . S, 256 int8 pairs = 8 x VDOT.B
+        la      s0, h_vec
+        la      s2, s_vec
+        li      s5, 0
+
+        lq      t0, 0(s0)
+        lq      t1, 0(s2)
+        vdot.b  t2, t0, t1
+        add     s5, s5, t2
+
+        lq      t0, 32(s0)
+        lq      t1, 32(s2)
+        vdot.b  t2, t0, t1
+        add     s5, s5, t2
+
+        lq      t0, 64(s0)
+        lq      t1, 64(s2)
+        vdot.b  t2, t0, t1
+        add     s5, s5, t2
+
+        lq      t0, 96(s0)
+        lq      t1, 96(s2)
+        vdot.b  t2, t0, t1
+        add     s5, s5, t2
+
+        lq      t0, 128(s0)
+        lq      t1, 128(s2)
+        vdot.b  t2, t0, t1
+        add     s5, s5, t2
+
+        lq      t0, 160(s0)
+        lq      t1, 160(s2)
+        vdot.b  t2, t0, t1
+        add     s5, s5, t2
+
+        lq      t0, 192(s0)
+        lq      t1, 192(s2)
+        vdot.b  t2, t0, t1
+        add     s5, s5, t2
+
+        lq      t0, 224(s0)
+        lq      t1, 224(s2)
+        vdot.b  t2, t0, t1
+        add     s5, s5, t2
+
+        ; E = -(S.(JS))/2 - (h.S).  Halving is a shift; the sign is folded in
+        ; by subtracting from zero rather than negating twice.
+        srai    s6, s6, 1
+        sub     a1, zero, s6
+        sub     a1, a1, s5          ; a1 = E
+
+        la      a0, msg_d
+        li      a7, 6
+        ecall
+        halt

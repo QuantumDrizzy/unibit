@@ -1,0 +1,98 @@
+; ============================================================================
+; Unibit — matrix-product-state contraction chain
+; ============================================================================
+;
+; The inner loop of every tensor-network method: walk a chain of sites, and at
+; each one contract the running transfer matrix with a bra core and a ket core.
+;
+;     E <- sum_{a,b,d} conj(A[a,d,a']) . E[a,b] . B[b,d,b']
+;
+; This is the same contraction that a tensor-train compressor, an MPS quantum
+; circuit emulator and a DMRG sweep all spend their time in. Here it runs at
+; bond dimension 2 through the ZIPPER2 instruction, with E carried in f32 and
+; the cores packed as int8 with per-bond scales.
+;
+; ZIPPER2 is the densest instruction in this ISA by a wide margin. One issue
+; performs both contraction stages: 16 complex multiply-accumulates to build the
+; intermediate, and 16 more to close it against the conjugated bra. That is 256
+; floating-point operations retired by a single instruction, against 64 for
+; VDOT.B.
+;
+; The loop is therefore almost pure work: two loads and one ZIPPER2 per site,
+; unrolled 8x so the pointer update and branch are amortised.
+;
+; Chain: 256 sites. The cores are left zeroed — ZIPPER2's cost does not depend
+; on operand values, and programs/mps_ghz_overlap.uasm already checks the
+; contraction against an analytic golden, so correctness is tested elsewhere and
+; this program measures cost.
+
+        .data
+
+e_bnd:  .dword 0x000000003F800000, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000
+ket:    .zero 8192              ; 256 packed cores, 32 bytes each
+bra:    .zero 8192
+
+msg_t:  .asciiz "=== Unibit: MPS chain, 256 sites at bond dimension 2 ===\n"
+msg_d:  .asciiz "[done] 256 zipper steps retired\n"
+
+        .text
+        .global _start
+
+_start:
+        la      a0, msg_t
+        li      a7, 6
+        ecall
+
+        la      t0, e_bnd
+        lq      s6, 0(t0)           ; s6 = E, the running transfer matrix
+
+        la      s0, ket             ; walking pointer into the ket cores
+        la      s2, bra             ; walking pointer into the bra cores
+        li      s4, 0               ; block index
+        li      s7, 32              ; 256 sites / 8 unrolled
+
+site_loop:
+        bge     s4, s7, done
+
+        lq      t0, 0(s0)
+        lq      t1, 0(s2)
+        zipper2 s6, t0, t1
+
+        lq      t0, 32(s0)
+        lq      t1, 32(s2)
+        zipper2 s6, t0, t1
+
+        lq      t0, 64(s0)
+        lq      t1, 64(s2)
+        zipper2 s6, t0, t1
+
+        lq      t0, 96(s0)
+        lq      t1, 96(s2)
+        zipper2 s6, t0, t1
+
+        lq      t0, 128(s0)
+        lq      t1, 128(s2)
+        zipper2 s6, t0, t1
+
+        lq      t0, 160(s0)
+        lq      t1, 160(s2)
+        zipper2 s6, t0, t1
+
+        lq      t0, 192(s0)
+        lq      t1, 192(s2)
+        zipper2 s6, t0, t1
+
+        lq      t0, 224(s0)
+        lq      t1, 224(s2)
+        zipper2 s6, t0, t1
+
+        addi    s0, s0, 256
+        addi    s2, s2, 256
+        addi    s4, s4, 1
+        j       site_loop
+
+done:
+        la      a0, msg_d
+        li      a7, 6
+        ecall
+        halt

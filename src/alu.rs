@@ -1546,8 +1546,8 @@ mod tests {
         }
 
         let (re, im) = TensorNetworkUnit::e_at(&e, 0, 0);
-        assert!((re as f64 - 1.0).abs() < 1e-6, "<GHZ|GHZ> = {} + {}i, esperado 1", re, im);
-        assert!((im as f64).abs() < 1e-6, "la norma debe ser real, im = {}", im);
+        assert!((re as f64 - 1.0).abs() < 1e-6, "<GHZ|GHZ> = {} + {}i, expected 1", re, im);
+        assert!((im as f64).abs() < 1e-6, "the norm must be real, im = {}", im);
     }
 
     /// The discriminating golden. `<GHZ|GHZ> = 1` above proves the plumbing but
@@ -1590,8 +1590,8 @@ mod tests {
 
         let (re, im) = TensorNetworkUnit::e_at(&e, 0, 0);
         let want = 1.0 / (2.0 * (2.0f64).sqrt());
-        assert!((re as f64 - want).abs() < 1e-6, "<GHZ_4|+^4> = {}, esperado {}", re, want);
-        assert!((im as f64).abs() < 1e-6, "debe ser real, im = {}", im);
+        assert!((re as f64 - want).abs() < 1e-6, "<GHZ_4|+^4> = {}, expected {}", re, want);
+        assert!((im as f64).abs() < 1e-6, "must be real, im = {}", im);
     }
 
     /// The packed core must survive the round trip to within the int8 step, and
