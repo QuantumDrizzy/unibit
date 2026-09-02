@@ -1,35 +1,56 @@
 // ============================================================================
-// FORJA-256 — Reverse Engineering & Binary Disassembler Engine
+// Unibit — Reverse Engineering & Binary Disassembler Engine
 // ============================================================================
 //
-// Tools for binary inspection, disassembly, Control Flow Graph (CFG) analysis,
-// and entropy signature auditing on FORJA-256 binaries.
+// Disassembly, control-flow analysis and entropy profiling of Unibit
+// binaries.
 //
 // Capabilities:
-//   1. Binary encoder: Serializes instructions into raw machine bytecode
-//   2. Disassembler: Decodes raw bytecode back into readable assembly & symbols
-//   3. Control Flow Analyzer: Identifies Basic Blocks, Jumps, Loops & Targets
-//   4. Entropy Scanner: Measures Shannon entropy across binary sections to
-//      detect hidden payloads, encrypted blocks, or high-density PQC keys.
+//   1. Disassembler: decodes an `UBIT` byte stream into readable assembly,
+//      with no access to the assembler's AST or symbol table. Encoding and
+//      decoding live in `crate::binary`.
+//   2. Control Flow Analyzer: identifies basic blocks, jumps, loops & targets
+//   3. Entropy Scanner: byte-level Shannon entropy per block, to spot packed
+//      or encrypted regions in a code or data section.
 //
 // ============================================================================
 
 use std::collections::HashMap;
 use crate::isa::*;
 
-/// Encoded 64-bit packed instruction format for FORJA-256 binary streams
-#[derive(Clone, Debug)]
-pub struct EncodedBinary {
-    pub magic: [u8; 4],          // "F256"
-    pub entry_point: u64,
-    pub code_bytes: Vec<u8>,
-    pub data_bytes: Vec<(u64, Vec<u8>)>,
-}
-
 pub struct Disassembler;
 
 impl Disassembler {
-    /// Disassembles an assembled instruction slice back into formatted assembly
+    /// Disassembles a raw `UBIT` object file: decodes the byte stream and
+    /// formats it, with no access to the assembler's AST or symbol table.
+    ///
+    /// This is the real entry point — `disassemble_instructions` below is the
+    /// convenience path for when you already hold decoded instructions and a
+    /// symbol table (so labels can be recovered).
+    pub fn disassemble_object(bytes: &[u8]) -> Result<String, String> {
+        let obj = crate::binary::read_object(bytes)?;
+        let mut out = String::new();
+        out.push_str(";; ====================================================================\n");
+        out.push_str(&format!(
+            ";; Unibit DISASSEMBLY — {} instructions, {} data segments, entry 0x{:04x}\n",
+            obj.code.len(),
+            obj.data.len(),
+            obj.entry_point
+        ));
+        out.push_str(";; ====================================================================\n\n");
+        out.push_str(&Self::disassemble_instructions(&obj.code, &HashMap::new()));
+
+        if !obj.data.is_empty() {
+            out.push_str("\n        .data\n");
+            for (addr, seg) in &obj.data {
+                out.push_str(&format!("  [0x{:08x}]  {} bytes\n", addr, seg.len()));
+            }
+        }
+        Ok(out)
+    }
+
+    /// Disassembles a decoded instruction slice, recovering labels from the
+    /// supplied symbol table.
     pub fn disassemble_instructions(instructions: &[Instruction], symbols: &HashMap<String, u64>) -> String {
         // Reverse symbol lookup: PC -> Label Name
         let mut reverse_symbols = HashMap::new();
@@ -38,9 +59,6 @@ impl Disassembler {
         }
 
         let mut out = String::new();
-        out.push_str(";; ====================================================================\n");
-        out.push_str(";; FORJA-256 REVERSE-ENGINEERED DISASSEMBLY & CONTROL FLOW ANALYSIS\n");
-        out.push_str(";; ====================================================================\n\n");
         out.push_str("        .text\n");
 
         for (pc, inst) in instructions.iter().enumerate() {
@@ -60,7 +78,7 @@ impl Disassembler {
     pub fn analyze_control_flow(instructions: &[Instruction]) -> String {
         let mut out = String::new();
         out.push_str("\n╔══════════════════════════════════════════════════════════════════════════════════╗\n");
-        out.push_str("║              FORJA-256 CONTROL FLOW GRAPH (CFG) REVERSE ANALYSIS                 ║\n");
+        out.push_str("║              Unibit CONTROL FLOW GRAPH (CFG) REVERSE ANALYSIS                 ║\n");
         out.push_str("╠══════════════════════════════════════════════════════════════════════════════════╣\n");
 
         let mut jump_targets = Vec::new();
@@ -224,8 +242,8 @@ fn format_instruction(inst: &Instruction, pc: u64, symbols: &HashMap<u64, String
         Instruction::VReduce { rd, rs1, width }   => format!("vreduce{}{}, {}", width, reg_name(*rd), reg_name(*rs1)),
 
         Instruction::Zipper { rd, rs1, rs2 } => format!("zipper   {}, {}, {}", reg_name(*rd), reg_name(*rs1), reg_name(*rs2)),
+        Instruction::Zipper2 { rd, rs1, rs2 } => format!("zipper2  {}, {}, {}", reg_name(*rd), reg_name(*rs1), reg_name(*rs2)),
         Instruction::Trunc { rd, rs1, eps_bits } => format!("trunc    {}, {}, {:#x}", reg_name(*rd), reg_name(*rs1), eps_bits),
-        Instruction::TTMul { rd, rs1, rs2 }  => format!("ttmul    {}, {}, {}", reg_name(*rd), reg_name(*rs1), reg_name(*rs2)),
 
         Instruction::CAdd { rd, rs1, rs2 } => format!("cadd     {}, {}, {}", reg_name(*rd), reg_name(*rs1), reg_name(*rs2)),
         Instruction::CSub { rd, rs1, rs2 } => format!("csub     {}, {}, {}", reg_name(*rd), reg_name(*rs1), reg_name(*rs2)),
@@ -252,7 +270,6 @@ fn format_instruction(inst: &Instruction, pc: u64, symbols: &HashMap<u64, String
 
         Instruction::Mv { rd, rs1 } => format!("mv       {}, {}", reg_name(*rd), reg_name(*rs1)),
         Instruction::Li { rd, imm } => format!("li       {}, {}", reg_name(*rd), imm),
-        Instruction::La { rd, label } => format!("la       {}, {}", reg_name(*rd), label),
 
         Instruction::Ecall => "ecall".to_string(),
         Instruction::Halt  => "halt".to_string(),

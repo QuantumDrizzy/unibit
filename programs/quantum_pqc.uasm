@@ -1,0 +1,69 @@
+; ============================================================================
+; Unibit — Quantum State & Post-Quantum Lattice PQC
+; ============================================================================
+
+        .data
+banner: .asciiz "\n╔══════════════════════════════════════════════════════════════╗\n║  Unibit: QUANTUM ARITHMETIC & LATTICE PQC ACCELERATOR    ║\n╚══════════════════════════════════════════════════════════════╝\n\n"
+msg_ent: .asciiz "[Step 1] QRAND + ENTROPY: 256-bit State Shannon Entropy = "
+msg_bits: .asciiz " bits\n"
+msg_pqc: .asciiz "[Step 2] PQC Lattice Ring Polynomial Multiplication mod 3329:\n         Output Register: "
+msg_ok:   .asciiz "\n[Step 3] NTT round-trip VERIFIED: invntt(ntt(x)) == x, 0 of 256 bits differ.\n[✓] Post-quantum quantum-resistant execution completed!\n"
+msg_fail: .asciiz "\n[Step 3] NTT round-trip FAILED: invntt(ntt(x)) != x.\n"
+nl:       .asciiz "\n"
+
+        .text
+        .global _start
+
+_start:
+        la    a0, banner
+        li    a7, 6          ; print_strz (NUL-terminated)
+        ecall
+
+        ; 1. Generate pseudo-quantum 256-bit state & calculate Shannon entropy
+        qrand   t0
+        entropy t1, t0
+
+        la    a0, msg_ent
+        li    a7, 6          ; print_strz (NUL-terminated)
+        ecall
+
+        mv    a0, t1
+        li    a7, 5          ; print_f64
+        ecall
+
+        la    a0, msg_bits
+        li    a7, 6          ; print_strz (NUL-terminated)
+        ecall
+
+        ; 2. Post-Quantum Lattice Cryptography
+        polymul t2, t0, t1
+
+        la    a0, msg_pqc
+        li    a7, 6          ; print_strz (NUL-terminated)
+        ecall
+
+        li    a0, 7          ; print t2 (reg 7)
+        li    a7, 20         ; print_reg256
+        ecall
+
+        ; 3. NTT round-trip, actually checked in-band rather than asserted.
+        ;    HAMMING returns the number of differing bits across all 256,
+        ;    so zero is proof the inverse transform recovered x exactly.
+        ntt     t3, t2
+        invntt  t4, t3
+        hamming t5, t4, t2
+        beq     t5, zero, ntt_ok
+
+        la    a0, msg_fail
+        li    a7, 6          ; print_strz (NUL-terminated)
+        ecall
+        li    a0, 1
+        li    a7, 93         ; exit(1) - the round-trip is broken
+        ecall
+
+ntt_ok:
+        la    a0, msg_ok
+        li    a7, 6          ; print_strz (NUL-terminated)
+        ecall
+
+        halt

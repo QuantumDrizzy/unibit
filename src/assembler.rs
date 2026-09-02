@@ -1,8 +1,8 @@
 // ============================================================================
-// FORJA-256 — Two-Pass Assembler & Symbol Linker
+// Unibit — Two-Pass Assembler & Symbol Linker
 // ============================================================================
 //
-// Converts FORJA assembly (.fja) source code into executable instruction
+// Converts Unibit assembly (.uasm) source code into executable instruction
 // streams and memory data payloads.
 //
 // Features:
@@ -28,6 +28,12 @@ pub struct Assembler {
     symbols: HashMap<String, u64>,
     data_bytes: Vec<(u64, Vec<u8>)>,
     current_data_addr: u64,
+}
+
+impl Default for Assembler {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Assembler {
@@ -341,7 +347,7 @@ impl Assembler {
             "jal" => {
                 if args.len() == 1 {
                     // `jal target` -> `jal ra, target`
-                    let offset = parse_branch_target(args.get(0), &self.symbols, current_pc, line_no)?;
+                    let offset = parse_branch_target(args.first(), &self.symbols, current_pc, line_no)?;
                     Ok(Instruction::Jal { rd: REG_RA, offset })
                 } else {
                     let rd = parse_reg(0, "jal")?;
@@ -385,15 +391,15 @@ impl Assembler {
                 Ok(Instruction::VReduce { rd: parse_reg(0, "vreduce")?, rs1: parse_reg(1, "vreduce")?, width })
             }
 
-            // ─── Tensor Network & MPS Instructions (Blaze Native) ───────────
+            // ─── Tensor Network & MPS Instructions ──────────────────────
             "zipper" => Ok(Instruction::Zipper { rd: parse_reg(0, "zipper")?, rs1: parse_reg(1, "zipper")?, rs2: parse_reg(2, "zipper")? }),
+            "zipper2" => Ok(Instruction::Zipper2 { rd: parse_reg(0, "zipper2")?, rs1: parse_reg(1, "zipper2")?, rs2: parse_reg(2, "zipper2")? }),
             "trunc"  => {
                 let rd = parse_reg(0, "trunc")?;
                 let rs1 = parse_reg(1, "trunc")?;
                 let eps_bits = parse_imm(2, "trunc")? as u64;
                 Ok(Instruction::Trunc { rd, rs1, eps_bits })
             }
-            "ttmul"  => Ok(Instruction::TTMul  { rd: parse_reg(0, "ttmul")?,  rs1: parse_reg(1, "ttmul")?,  rs2: parse_reg(2, "ttmul")?  }),
 
             // ─── Complex Arithmetic (Quantum) ────────────────────────────────
             "cadd"  => Ok(Instruction::CAdd  { rd: parse_reg(0, "cadd")?, rs1: parse_reg(1, "cadd")?, rs2: parse_reg(2, "cadd")? }),
@@ -460,11 +466,11 @@ impl Assembler {
                 Ok(Instruction::Mv { rd, rs1 })
             }
             "j" => {
-                let offset = parse_branch_target(args.get(0), &self.symbols, current_pc, line_no)?;
+                let offset = parse_branch_target(args.first(), &self.symbols, current_pc, line_no)?;
                 Ok(Instruction::Jal { rd: REG_ZERO, offset })
             }
             "call" => {
-                let offset = parse_branch_target(args.get(0), &self.symbols, current_pc, line_no)?;
+                let offset = parse_branch_target(args.first(), &self.symbols, current_pc, line_no)?;
                 Ok(Instruction::Jal { rd: REG_RA, offset })
             }
             "ret" => {
@@ -482,7 +488,7 @@ impl Assembler {
                 Ok(Instruction::CsrR { rd, csr })
             }
             "csrw" => {
-                let csr = parse_csr_name(args.get(0).unwrap_or(&""))?;
+                let csr = parse_csr_name(args.first().unwrap_or(&""))?;
                 let rs1 = parse_reg(1, "csrw")?;
                 Ok(Instruction::CsrW { csr, rs1 })
             }
@@ -497,10 +503,10 @@ impl Assembler {
 fn sanitize_line(line: &str) -> String {
     let mut s = line.trim();
     if let Some(pos) = s.find(';') {
-        s = &s[..pos].trim();
+        s = s[..pos].trim();
     }
     if let Some(pos) = s.find("//") {
-        s = &s[..pos].trim();
+        s = s[..pos].trim();
     }
     s.to_string()
 }
@@ -523,7 +529,10 @@ fn parse_immediate(text: &str, symbols: &HashMap<String, u64>, _pc: u64) -> Resu
         return Ok(*val as i64);
     }
     if t.starts_with("0x") || t.starts_with("0X") {
-        return i64::from_str_radix(&t[2..], 16)
+        // Parse as u64 and reinterpret: 0xBFF0000000000000 (the f64 bit pattern
+        // of -1.0) exceeds i64::MAX and would otherwise be rejected outright.
+        return u64::from_str_radix(&t[2..], 16)
+            .map(|v| v as i64)
             .map_err(|e| format!("invalid hex number '{}': {}", t, e));
     }
     if t.starts_with("0b") || t.starts_with("0B") {
@@ -577,8 +586,8 @@ fn parse_csr_name(s: &str) -> Result<u16, String> {
         "temp" | "temp_k" => Ok(csr::TEMP_K),
         "landauer" => Ok(csr::LANDAUER),
         _ => {
-            if s.starts_with("0x") {
-                u16::from_str_radix(&s[2..], 16).map_err(|e| format!("invalid CSR hex: {}", e))
+            if let Some(hex) = s.strip_prefix("0x") {
+                u16::from_str_radix(hex, 16).map_err(|e| format!("invalid CSR hex: {}", e))
             } else {
                 s.parse::<u16>().map_err(|e| format!("unknown CSR name '{}': {}", s, e))
             }
@@ -596,6 +605,13 @@ fn extract_quoted_string(s: &str) -> Option<String> {
     }
 }
 
+/// Appends a char as its UTF-8 encoding. Using `c as u8` here would truncate
+/// every non-ASCII char to its low byte (box-drawing U+2554 -> 0x54 = 'T').
+fn push_utf8(out: &mut Vec<u8>, c: char) {
+    let mut buf = [0u8; 4];
+    out.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
+}
+
 fn unescape_string(s: &str) -> Vec<u8> {
     let mut out = Vec::new();
     let mut chars = s.chars().peekable();
@@ -608,11 +624,11 @@ fn unescape_string(s: &str) -> Vec<u8> {
                 Some('\\') => out.push(b'\\'),
                 Some('0') => out.push(0),
                 Some('"') => out.push(b'"'),
-                Some(other) => out.push(other as u8),
+                Some(other) => push_utf8(&mut out, other),
                 None => out.push(b'\\'),
             }
         } else {
-            out.push(c as u8);
+            push_utf8(&mut out, c);
         }
     }
     out

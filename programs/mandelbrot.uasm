@@ -1,13 +1,13 @@
 ; ============================================================================
-; FORJA-256 — ASCII Mandelbrot Fractal Generator
+; Unibit — ASCII Mandelbrot Fractal Generator
 ; ============================================================================
 ;
 ; Computes the Mandelbrot set in fixed-point arithmetic (scale 256)
-; Rendering a 60x22 character ASCII fractal on the FORJA-256 processor core!
+; Rendering a 60x22 character ASCII fractal on the Unibit processor core!
 ; ============================================================================
 
         .data
-title:    .asciiz "\n=== FORJA-256: Mandelbrot Set (ASCII Render) ===\n\n"
+title:    .asciiz "\n=== Unibit: Mandelbrot Set (ASCII Render) ===\n\n"
 char_nl:  .asciiz "\n"
 
         .text
@@ -15,8 +15,7 @@ char_nl:  .asciiz "\n"
 
 _start:
         la    a0, title
-        li    a1, 52
-        li    a7, 3          ; print_str
+        li    a7, 6          ; print_strz (NUL-terminated)
         ecall
 
         ; y loop: y from -10 to 10 (21 rows)
@@ -96,8 +95,7 @@ next_x:
 
 next_y:
         la    a0, char_nl
-        li    a1, 1
-        li    a7, 3          ; print_str '\n'
+        li    a7, 6          ; print_strz (NUL-terminated)
         ecall
 
         addi  s0, s0, 1

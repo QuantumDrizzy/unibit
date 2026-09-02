@@ -1,5 +1,5 @@
 // ============================================================================
-// FORJA-256 — CPU Core & Pipeline Engine
+// Unibit — CPU Core & Pipeline Engine
 // ============================================================================
 //
 // 256-bit Post-Quantum AI-Native Processor Implementation.
@@ -37,6 +37,12 @@ pub struct BranchPredictor {
     btb: [u64; 512],
 }
 
+impl Default for BranchPredictor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BranchPredictor {
     pub fn new() -> Self {
         Self {
@@ -64,10 +70,8 @@ impl BranchPredictor {
                 self.bht[idx] += 1;
             }
             self.btb[idx] = actual_target;
-        } else {
-            if self.bht[idx] > 0 {
-                self.bht[idx] -= 1;
-            }
+        } else if self.bht[idx] > 0 {
+            self.bht[idx] -= 1;
         }
     }
 }
@@ -104,8 +108,9 @@ impl CpuMetrics {
         }
     }
 
-    pub fn landauer_energy_joules(&self, temp_k: f64) -> f64 {
-        (self.bit_erasures as f64) * landauer_energy(temp_k)
+    /// Minimum dissipated work for `bits` irreversibly destroyed, at temp_k.
+    pub fn landauer_energy_joules_for(bits: u64, temp_k: f64) -> f64 {
+        (bits as f64) * landauer_energy(temp_k)
     }
 }
 
@@ -123,6 +128,9 @@ pub struct Cpu {
     pub trace: bool,
     pub stdout_buffer: Vec<u8>,
     pub capture_output: bool,
+    /// When false the machine predicts statically not-taken, which is the
+    /// baseline the BHT/BTB is measured against. See `unibit bench`.
+    pub predictor_enabled: bool,
 }
 
 impl Cpu {
@@ -139,6 +147,7 @@ impl Cpu {
             trace: false,
             stdout_buffer: Vec::new(),
             capture_output: false,
+            predictor_enabled: true,
         };
         // Initialize Stack Pointer at high memory address
         cpu.regs[REG_SP as usize] = Reg256::from_u64((mem_size - 256) as u64);
@@ -155,7 +164,14 @@ impl Cpu {
         }
     }
 
-    /// Write register value, tracking bit erasures for Landauer limit
+    /// Write a register, accumulating the bits destroyed for the Landauer
+    /// tracker.
+    ///
+    /// [KNOWN_LIMIT] This counts *bits overwritten with a different value*
+    /// (Hamming distance old vs new). That is a cost model, not a physical
+    /// measurement: it does not track logical reversibility, and it ignores
+    /// the operand bits an irreversible ALU gate consumes. Memory stores are
+    /// counted the same way in `Memory::overwrite`.
     #[inline]
     pub fn set_reg(&mut self, r: u8, val: Reg256) {
         if r == 0 {
@@ -574,9 +590,15 @@ impl Cpu {
                 self.pc = next_pc;
             }
 
-            // ─── Tensor Network / MPS Accelerator (Blaze Native) ────────────
+            // ─── Tensor Network / MPS Accelerator ───────────────────────
             Instruction::Zipper { rd, rs1, rs2 } => {
                 let res = TensorNetworkUnit::zipper_step(&self.get_reg(*rd), &self.get_reg(*rs1), &self.get_reg(*rs2));
+                self.set_reg(*rd, res);
+                self.metrics.tensor_ops += 1;
+                self.pc = next_pc;
+            }
+            Instruction::Zipper2 { rd, rs1, rs2 } => {
+                let res = TensorNetworkUnit::zipper2_step(&self.get_reg(*rd), &self.get_reg(*rs1), &self.get_reg(*rs2));
                 self.set_reg(*rd, res);
                 self.metrics.tensor_ops += 1;
                 self.pc = next_pc;
@@ -587,22 +609,20 @@ impl Cpu {
                 self.metrics.tensor_ops += 1;
                 self.pc = next_pc;
             }
-            Instruction::TTMul { rd, rs1, rs2 } => {
-                let res = VectorUnit::vmul(&self.get_reg(*rs1), &self.get_reg(*rs2), Width::B64);
-                self.set_reg(*rd, res);
-                self.metrics.tensor_ops += 1;
-                self.pc = next_pc;
-            }
 
             // ─── Post-Quantum Lattice Cryptography Instructions ──────────────
             Instruction::Ntt { rd, rs1 } => {
-                let res = LatticeUnit::ntt(&self.get_reg(*rs1), KYBER_Q);
+                let res = LatticeUnit::ntt(&self.get_reg(*rs1), KYBER_Q).ok_or_else(|| {
+                    format!("ntt: modulus {} admits no negacyclic root of unity", KYBER_Q)
+                })?;
                 self.set_reg(*rd, res);
                 self.metrics.lattice_ops += 1;
                 self.pc = next_pc;
             }
             Instruction::InvNtt { rd, rs1 } => {
-                let res = LatticeUnit::inv_ntt(&self.get_reg(*rs1), KYBER_Q);
+                let res = LatticeUnit::inv_ntt(&self.get_reg(*rs1), KYBER_Q).ok_or_else(|| {
+                    format!("invntt: modulus {} admits no negacyclic root of unity", KYBER_Q)
+                })?;
                 self.set_reg(*rd, res);
                 self.metrics.lattice_ops += 1;
                 self.pc = next_pc;
@@ -640,13 +660,13 @@ impl Cpu {
                 self.pc = next_pc;
             }
             Instruction::TMul { rd, rs1, rs2 } => {
-                let res = VectorUnit::vmul(&self.get_reg(*rs1), &self.get_reg(*rs2), Width::B64);
+                let res = TensorUnit::matmul2x2(&self.get_reg(*rs1), &self.get_reg(*rs2));
                 self.set_reg(*rd, res);
                 self.metrics.tensor_ops += 1;
                 self.pc = next_pc;
             }
             Instruction::TDot { rd, rs1, rs2 } => {
-                let res = VectorUnit::vdot(&self.get_reg(*rs1), &self.get_reg(*rs2), Width::B64);
+                let res = TensorUnit::dot_f64(&self.get_reg(*rs1), &self.get_reg(*rs2));
                 self.set_reg(*rd, res);
                 self.metrics.tensor_ops += 1;
                 self.pc = next_pc;
@@ -660,10 +680,6 @@ impl Cpu {
             }
             Instruction::Li { rd, imm } => {
                 self.set_reg(*rd, Reg256::from_i64(*imm));
-                self.pc = next_pc;
-            }
-            Instruction::La { rd: _, label: _ } => {
-                // Resolved at assembly time, but if encountered:
                 self.pc = next_pc;
             }
 
@@ -685,7 +701,7 @@ impl Cpu {
                 let val = match *csr {
                     csr::CYCLE => self.metrics.cycles,
                     csr::INSTRET => self.metrics.instructions_retired,
-                    csr::ENTROPY_ACC => self.metrics.bit_erasures,
+                    csr::ENTROPY_ACC => self.metrics.bit_erasures + self.memory.bit_erasures,
                     csr::TEMP_K => self.temp_k as u64,
                     csr::LANDAUER => (landauer_energy(self.temp_k) * 1e24) as u64, // in yoctojoules
                     _ => 0,
@@ -708,8 +724,15 @@ impl Cpu {
     #[inline]
     fn handle_branch(&mut self, condition: bool, offset: i64) {
         self.metrics.branch_count += 1;
-        let actual_target = (self.pc as i64 + offset) as u64;
-        let (predicted_taken, _) = self.branch_predictor.predict(self.pc);
+        // Capture the branch's own PC: self.pc is about to be redirected, and
+        // both predict and update must index the BHT/BTB by the branch site.
+        let branch_pc = self.pc;
+        let actual_target = (branch_pc as i64 + offset) as u64;
+        let (predicted_taken, _) = if self.predictor_enabled {
+            self.branch_predictor.predict(branch_pc)
+        } else {
+            (false, 0) // static not-taken: the baseline
+        };
 
         if condition {
             self.pc = actual_target;
@@ -723,7 +746,7 @@ impl Cpu {
             self.metrics.pipeline_stalls += 3;
         }
 
-        self.branch_predictor.update(self.pc, condition, actual_target);
+        self.branch_predictor.update(branch_pc, condition, actual_target);
     }
 
     // ─── Syscall Dispatcher ──────────────────────────────────────────────────
@@ -742,9 +765,15 @@ impl Cpu {
             syscall::PRINT_STR => {
                 let addr = self.get_reg(REG_A0).as_u64();
                 let len = self.get_reg(REG_A1).as_u64() as usize;
-                let bytes = self.memory.read_bytes(addr, len)?;
-                let text = String::from_utf8_lossy(bytes);
-                self.emit_output(format!("{}", text));
+                let text = String::from_utf8_lossy(self.memory.read_bytes(addr, len)?).into_owned();
+                self.emit_output(text);
+            }
+            syscall::PRINT_STRZ => {
+                // NUL-terminated: no hand-counted length to drift out of sync
+                // with the real byte length (a UTF-8 char spans 1-4 bytes).
+                let addr = self.get_reg(REG_A0).as_u64();
+                let text = String::from_utf8_lossy(self.memory.read_cstr(addr)?).into_owned();
+                self.emit_output(text);
             }
             syscall::PRINT_HEX => {
                 let val = self.get_reg(REG_A0).as_u64();
@@ -801,11 +830,13 @@ impl Cpu {
 
     pub fn print_report(&self) {
         let m = &self.metrics;
-        let landauer_ej = m.landauer_energy_joules(self.temp_k);
+        // Whole-machine erasure count: register writes plus memory stores.
+        let total_erasures = m.bit_erasures + self.memory.bit_erasures;
+        let landauer_ej = CpuMetrics::landauer_energy_joules_for(total_erasures, self.temp_k);
         let landauer_floor = landauer_energy(self.temp_k);
 
         println!("\n╔══════════════════════════════════════════════════════════════════════════════════╗");
-        println!("║                      FORJA-256 PROCESSOR EXECUTION REPORT                        ║");
+        println!("║                      Unibit PROCESSOR EXECUTION REPORT                        ║");
         println!("╠══════════════════════════════════════════════════════════════════════════════════╣");
         println!("║  ┌─ Microarchitecture & Pipeline ─────────────────────────────────────────────┐  ║");
         println!("║  │ Total Instructions Retired:  {:<14} Cycles: {:<20}│  ║", m.instructions_retired, m.cycles);
@@ -822,7 +853,8 @@ impl Cpu {
         println!("║                                                                                  ║");
         println!("║  ┌─ Landauer Thermodynamic Dissipation (Physics Engine) ──────────────────────┐  ║");
         println!("║  │ Operating Temperature:       {:<7.2} K (Ambient / Dilution Ref configurable) │  ║", self.temp_k);
-        println!("║  │ Irreversible Bit Erasures:   {:<14} bits flipped/erased           │  ║", m.bit_erasures);
+        println!("║  │ Bits Destroyed (reg + mem):  {:<14} {:>10} reg / {:<10} mem  │  ║",
+            total_erasures, m.bit_erasures, self.memory.bit_erasures);
         println!("║  │ Landauer Energy Floor (1b):  {:<14.5e} Joules (k_B·T·ln2)                  │  ║", landauer_floor);
         println!("║  │ Min Thermodynamic Work:      {:<14.5e} Joules ({:<7.2} zeptoJoules)     │  ║",
             landauer_ej, landauer_ej * 1e21);

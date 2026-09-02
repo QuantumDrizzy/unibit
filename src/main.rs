@@ -1,11 +1,11 @@
 // ============================================================================
-// FORJA-256 — CLI & Processor Simulator Runtime
+// Unibit — CLI & Processor Simulator Runtime
 // ============================================================================
 //
 // Usage:
-//   forja run <file.fja> [--trace] [--temp-k <K>]
-//   forja demo [fibonacci | quantum_pqc | neural_tensor]
-//   forja bench <file.fja>
+//   unibit run <file.uasm> [--trace] [--temp-k <K>]
+//   unibit demo [fibonacci | quantum_pqc | neural_tensor]
+//   unibit bench <file.uasm>
 //
 // ============================================================================
 
@@ -14,19 +14,20 @@ use std::fs;
 use std::process;
 use std::time::Instant;
 
-use forja::assembler::Assembler;
-use forja::cpu::Cpu;
+use unibit::assembler::{AssembledProgram, Assembler};
+use unibit::binary::{self, Object};
+use unibit::cpu::Cpu;
 
 // ─── Embedded Demo Programs ──────────────────────────────────────────────────
 
 const DEMO_FIBONACCI: &str = r#"
 ; ============================================================================
-; DEMO: Fibonacci Sequence (FORJA-256)
+; DEMO: Fibonacci Sequence (Unibit)
 ; Computes first 25 Fibonacci numbers, tracking cycles and Landauer work.
 ; ============================================================================
 
         .data
-msg_title: .asciiz "=== FORJA-256: Fibonacci Computation ===\n"
+msg_title: .asciiz "=== Unibit: Fibonacci Computation ===\n"
 msg_comma: .asciiz ", "
 msg_nl:    .asciiz "\n"
 
@@ -36,8 +37,7 @@ msg_nl:    .asciiz "\n"
 _start:
         ; Print title
         la    a0, msg_title
-        li    a1, 41
-        li    a7, 3
+        li    a7, 6          ; print_strz (NUL-terminated)
         ecall
 
         ; Init Fibonacci state in saved registers s1, s2
@@ -50,16 +50,14 @@ _start:
         li    a7, 1          ; print_int
         ecall                ; prints 0
         la    a0, msg_comma
-        li    a1, 2
-        li    a7, 3
+        li    a7, 6          ; print_strz (NUL-terminated)
         ecall
 
         mv    a0, s2
         li    a7, 1          ; print_int
         ecall                ; prints 1
         la    a0, msg_comma
-        li    a1, 2
-        li    a7, 3
+        li    a7, 6          ; print_strz (NUL-terminated)
         ecall
 
 fib_loop:
@@ -73,8 +71,7 @@ fib_loop:
         li    a7, 1          ; print_int
         ecall
         la    a0, msg_comma
-        li    a1, 2
-        li    a7, 3          ; print_str
+        li    a7, 6          ; print_strz (NUL-terminated)
         ecall
 
         addi  t0, t0, -1     ; counter--
@@ -82,15 +79,14 @@ fib_loop:
 
 done:
         la    a0, msg_nl
-        li    a1, 1
-        li    a7, 3
+        li    a7, 6          ; print_strz (NUL-terminated)
         ecall
         halt
 "#;
 
 const DEMO_QUANTUM_PQC: &str = r#"
 ; ============================================================================
-; DEMO: Quantum State & Post-Quantum Lattice PQC (FORJA-256)
+; DEMO: Quantum State & Post-Quantum Lattice PQC (Unibit)
 ; Demonstrates:
 ;   1. QRAND + ENTROPY instructions (Shannon entropy of 256-bit state)
 ;   2. Complex arithmetic: (3 + 4i) * (1 - 2i) = 11 - 2i
@@ -98,12 +94,13 @@ const DEMO_QUANTUM_PQC: &str = r#"
 ; ============================================================================
 
         .data
-msg_banner:   .asciiz "=== FORJA-256: Quantum & PQC Accelerator Demo ===\n"
+msg_banner:   .asciiz "=== Unibit: Quantum & PQC Accelerator Demo ===\n"
 msg_ent:      .asciiz "[1] Quantum-Random 256-bit State Shannon Entropy: "
 msg_bits:     .asciiz " bits\n"
 msg_cmplx:    .asciiz "[2] Quantum Complex Conjugate Result:\n    "
 msg_pqc:      .asciiz "[3] Post-Quantum Lattice Polynomial Multiplication mod 3329:\n    "
 msg_done:     .asciiz "[OK] All Post-Quantum Instructions Executed Successfully!\n"
+msg_rt:       .asciiz "[4] NTT round-trip mismatched bits (0 = exact): "
 msg_nl:       .asciiz "\n"
 
         .text
@@ -111,8 +108,7 @@ msg_nl:       .asciiz "\n"
 
 _start:
         la    a0, msg_banner
-        li    a1, 50
-        li    a7, 3
+        li    a7, 6          ; print_strz (NUL-terminated)
         ecall
 
         ; ── 1. Information Theory Engine ──
@@ -120,8 +116,7 @@ _start:
         entropy t1, t0             ; t1 = Shannon entropy in bits (f64 bits)
 
         la    a0, msg_ent
-        li    a1, 50
-        li    a7, 3
+        li    a7, 6          ; print_strz (NUL-terminated)
         ecall
 
         mv    a0, t1
@@ -129,8 +124,7 @@ _start:
         ecall
 
         la    a0, msg_bits
-        li    a1, 6
-        li    a7, 3
+        li    a7, 6          ; print_strz (NUL-terminated)
         ecall
 
         ; ── 2. Complex Arithmetic (Quantum Unit) ──
@@ -138,42 +132,50 @@ _start:
         cconj t5, t4               ; t5 = complex conjugate
 
         la    a0, msg_cmplx
-        li    a1, 42
-        li    a7, 3
+        li    a7, 6          ; print_strz (NUL-terminated)
         ecall
 
-        li    a0, 5                ; print t5 (register 5)
+        li    a0, 30               ; print t5 (= x30)
         li    a7, 20               ; print_reg256
         ecall
 
         la    a0, msg_nl
-        li    a1, 1
-        li    a7, 3
+        li    a7, 6          ; print_strz (NUL-terminated)
         ecall
 
         ; ── 3. Post-Quantum Lattice Cryptography ──
         ; Polynomial multiplication in ring R_q (q=3329)
         polymul t6, t0, t1
-        ntt     a2, t6
-        invntt  a3, a2
+        ntt     a2, t6             ; forward negacyclic NTT
+        invntt  a3, a2             ; a3 must equal t6 again
+        hamming a4, a3, t6         ; 0 iff the round-trip is exact
 
         la    a0, msg_pqc
-        li    a1, 66
-        li    a7, 3
+        li    a7, 6          ; print_strz (NUL-terminated)
         ecall
 
-        li    a0, 28               ; print t6 (reg 28)
+        li    a0, 31               ; print t6 (= x31)
         li    a7, 20
         ecall
 
         la    a0, msg_nl
-        li    a1, 1
-        li    a7, 3
+        li    a7, 6          ; print_strz (NUL-terminated)
+        ecall
+
+        la    a0, msg_rt
+        li    a7, 6          ; print_strz (NUL-terminated)
+        ecall
+
+        mv    a0, a4
+        li    a7, 1                ; print_int
+        ecall
+
+        la    a0, msg_nl
+        li    a7, 6          ; print_strz (NUL-terminated)
         ecall
 
         la    a0, msg_done
-        li    a1, 58
-        li    a7, 3
+        li    a7, 6          ; print_strz (NUL-terminated)
         ecall
 
         halt
@@ -181,7 +183,7 @@ _start:
 
 const DEMO_NEURAL_TENSOR: &str = r#"
 ; ============================================================================
-; DEMO: 256-bit SIMD Vector & Neural Tensor Unit (FORJA-256)
+; DEMO: 256-bit SIMD Vector & Neural Tensor Unit (Unibit)
 ; Demonstrates:
 ;   1. 32-way 8-bit vector arithmetic (int8 quantized AI inference)
 ;   2. Non-linear activation functions (GeLU, Softmax)
@@ -189,10 +191,12 @@ const DEMO_NEURAL_TENSOR: &str = r#"
 ; ============================================================================
 
         .data
-msg_title:    .asciiz "=== FORJA-256: 256-bit SIMD & Neural Tensor Unit ===\n"
+        ; f64 activations fed to the tensor unit: -1.0, 0.5, 2.0, -0.25
+weights:      .dword 0xBFF0000000000000, 0x3FE0000000000000, 0x4000000000000000, 0xBFD0000000000000
+msg_title:    .asciiz "=== Unibit: 256-bit SIMD & Neural Tensor Unit ===\n"
 msg_vec:      .asciiz "[1] 32-way 8-bit Vector SIMD Addition (Int8 Quantized AI)\n"
 msg_dot:      .asciiz "[2] 256-bit Vector Dot Product (vdot.d): "
-msg_act:      .asciiz "[3] Neural Activation (GeLU + Softmax) Computed on 4 lanes\n"
+msg_act:      .asciiz "[3] Neural Activation (GeLU + Softmax) on 4 f64 lanes:\n    "
 msg_nl:       .asciiz "\n"
 
         .text
@@ -200,23 +204,23 @@ msg_nl:       .asciiz "\n"
 
 _start:
         la    a0, msg_title
-        li    a1, 53
-        li    a7, 3
+        li    a7, 6          ; print_strz (NUL-terminated)
         ecall
 
-        ; ── 1. Vector SIMD ──
-        vadd.b  t0, t0, t0         ; 32 parallel 8-bit adds
-        vmul.w  t1, t0, t0         ; 8 parallel 32-bit multiplies
-        vdot.d  t2, t1, t1         ; Dot product of 4 64-bit lanes
+        ; ── 1. Vector SIMD on real operands ──
+        li      t3, 3
+        vsplat.b t3, t3            ; 32 int8 lanes, each = 3
+        li      t4, 5
+        vsplat.b t4, t4            ; 32 int8 lanes, each = 5
+        vadd.b  t0, t3, t4         ; 32 parallel 8-bit adds -> 8 per lane
+        vdot.d  t2, t0, t0         ; sum of 4 lanes squared, as 64-bit ints
 
         la    a0, msg_vec
-        li    a1, 58
-        li    a7, 3
+        li    a7, 6          ; print_strz (NUL-terminated)
         ecall
 
         la    a0, msg_dot
-        li    a1, 41
-        li    a7, 3
+        li    a7, 6          ; print_strz (NUL-terminated)
         ecall
 
         mv    a0, t2
@@ -224,17 +228,25 @@ _start:
         ecall
 
         la    a0, msg_nl
-        li    a1, 1
-        li    a7, 3
+        li    a7, 6          ; print_strz (NUL-terminated)
         ecall
 
-        ; ── 2. Neural Activations ──
-        tact    t3, t1, gelu       ; Apply GeLU non-linearity
-        tsoftmax t4, t3            ; Compute Softmax probability distribution
+        ; ── 2. Neural Activations on f64 lanes loaded from memory ──
+        la      t5, weights
+        lq      t6, 0(t5)          ; 256-bit load: 4 x f64
+        tact    a2, t6, gelu       ; GeLU across all 4 lanes
+        tsoftmax a3, a2            ; Softmax over the activated lanes
 
         la    a0, msg_act
-        li    a1, 59
-        li    a7, 3
+        li    a7, 6          ; print_strz (NUL-terminated)
+        ecall
+
+        li    a0, 13               ; print a3 (= x13), the softmax result
+        li    a7, 20               ; print_reg256
+        ecall
+
+        la    a0, msg_nl
+        li    a7, 6          ; print_strz (NUL-terminated)
         ecall
 
         halt
@@ -254,22 +266,14 @@ fn main() {
     match args[1].as_str() {
         "run" => {
             if args.len() < 3 {
-                eprintln!("Error: Missing file path. Usage: forja run <file.fja> [--trace] [--temp-k <K>]");
+                eprintln!("Error: Missing file path. Usage: unibit run <file.uasm> [--trace] [--temp-k <K>]");
                 process::exit(1);
             }
             let file_path = &args[2];
             let trace = args.iter().any(|a| a == "--trace" || a == "-t");
             let temp_k = parse_temp_arg(&args).unwrap_or(300.0);
 
-            let source = match fs::read_to_string(file_path) {
-                Ok(s) => s,
-                Err(e) => {
-                    eprintln!("Error reading file '{}': {}", file_path, e);
-                    process::exit(1);
-                }
-            };
-
-            run_assembly_source(&source, trace, temp_k);
+            run_object(&load_object_bytes(file_path), trace, temp_k);
         }
         "demo" => {
             let demo_name = args.get(2).map(|s| s.as_str()).unwrap_or("fibonacci");
@@ -291,29 +295,72 @@ fn main() {
         }
         "disasm" | "re" | "decompile" => {
             if args.len() < 3 {
-                eprintln!("Error: Missing file path. Usage: forja disasm <file.fja>");
+                eprintln!("Error: Missing file path. Usage: unibit disasm <file.uasm>");
                 process::exit(1);
             }
             let file_path = &args[2];
-            let source = fs::read_to_string(file_path).unwrap_or_else(|e| {
-                eprintln!("Error reading file '{}': {}", file_path, e);
+            // Always disassemble from bytes: for a .uasm source this assembles
+            // and encodes first, so the decode path is exercised either way.
+            let bytes = load_object_bytes(file_path);
+            let output = unibit::disasm::Disassembler::disassemble_object(&bytes)
+                .unwrap_or_else(|e| {
+                    eprintln!("Disassembly error: {}", e);
+                    process::exit(1);
+                });
+            println!("{}", output);
+
+            let obj = binary::read_object(&bytes).unwrap_or_else(|e| {
+                eprintln!("Object error: {}", e);
                 process::exit(1);
             });
-            let mut assembler = Assembler::new();
-            let program = assembler.assemble(&source).unwrap_or_else(|e| {
-                eprintln!("Assembler error: {}", e);
+            println!("{}", unibit::disasm::Disassembler::analyze_control_flow(&obj.code));
+
+            let profile = unibit::disasm::Disassembler::scan_entropy_profile(&bytes, 256);
+            println!("  ENTROPY PROFILE (256-byte blocks, max 8.0 bits/byte)");
+            for (offset, bits) in profile.iter() {
+                let bar = "#".repeat((bits * 4.0).round() as usize);
+                println!("    [0x{:06x}]  {:.3}  {}", offset, bits, bar);
+            }
+            println!();
+        }
+        "build" | "asm" => {
+            if args.len() < 3 {
+                eprintln!("Error: Missing file path. Usage: unibit build <file.uasm> [-o <out.ubo>]");
                 process::exit(1);
+            }
+            let file_path = &args[2];
+            let out_path = args
+                .iter()
+                .position(|a| a == "-o")
+                .and_then(|i| args.get(i + 1))
+                .cloned()
+                .unwrap_or_else(|| {
+                    let stem = file_path.rsplit_once('.').map(|(s, _)| s).unwrap_or(file_path);
+                    format!("{}.ubo", stem)
+                });
+
+            let program = assemble_file(file_path);
+            let code_len = program.instructions.len();
+            let bytes = binary::write_object(&Object {
+                entry_point: program.entry_point,
+                code: program.instructions,
+                data: program.data_segment,
             });
-
-            let disasm_output = forja::disasm::Disassembler::disassemble_instructions(&program.instructions, &program.symbols);
-            println!("{}", disasm_output);
-
-            let cfg_output = forja::disasm::Disassembler::analyze_control_flow(&program.instructions);
-            println!("{}", cfg_output);
+            if let Err(e) = fs::write(&out_path, &bytes) {
+                eprintln!("Error writing '{}': {}", out_path, e);
+                process::exit(1);
+            }
+            println!(
+                "Wrote {} ({} bytes, {} instructions, entry 0x{:04x})",
+                out_path,
+                bytes.len(),
+                code_len,
+                program.entry_point
+            );
         }
         "cfg" => {
             if args.len() < 3 {
-                eprintln!("Error: Missing file path. Usage: forja cfg <file.fja>");
+                eprintln!("Error: Missing file path. Usage: unibit cfg <file.uasm>");
                 process::exit(1);
             }
             let file_path = &args[2];
@@ -326,11 +373,15 @@ fn main() {
                 eprintln!("Assembler error: {}", e);
                 process::exit(1);
             });
-            let cfg_output = forja::disasm::Disassembler::analyze_control_flow(&program.instructions);
+            let cfg_output = unibit::disasm::Disassembler::analyze_control_flow(&program.instructions);
             println!("{}", cfg_output);
         }
         "bench" => {
             if args.len() < 3 {
+                benchmark_suite(50);
+                return;
+            }
+            if false {
                 eprintln!("Error: Missing file path for bench.");
                 process::exit(1);
             }
@@ -342,14 +393,14 @@ fn main() {
             benchmark_assembly_source(&source, 100);
         }
         "version" | "-v" | "--version" => {
-            println!("FORJA-256 Core Processor Simulator v0.1.0 (Post-Quantum AI-Native Architecture)");
+            println!("Unibit Core Processor Simulator v0.1.0 (Post-Quantum AI-Native Architecture)");
         }
         "help" | "-h" | "--help" => {
             print_banner();
             print_usage();
         }
         other => {
-            eprintln!("Unknown command: '{}'. Type 'forja help' for commands.", other);
+            eprintln!("Unknown command: '{}'. Type 'unibit help' for commands.", other);
             process::exit(1);
         }
     }
@@ -357,32 +408,76 @@ fn main() {
 
 // ─── Execution Runner ────────────────────────────────────────────────────────
 
+/// Assemble a `.uasm` source file, or exit with the assembler's message.
+fn assemble_file(path: &str) -> AssembledProgram {
+    let source = fs::read_to_string(path).unwrap_or_else(|e| {
+        eprintln!("Error reading file '{}': {}", path, e);
+        process::exit(1);
+    });
+    Assembler::new().assemble(&source).unwrap_or_else(|e| {
+        eprintln!("Assembler error: {}", e);
+        process::exit(1);
+    })
+}
+
+/// Load a path as `UBIT` object bytes. A `.uasm` source is assembled and
+/// encoded on the fly, so callers always work with a real byte stream.
+fn load_object_bytes(path: &str) -> Vec<u8> {
+    let raw = fs::read(path).unwrap_or_else(|e| {
+        eprintln!("Error reading file '{}': {}", path, e);
+        process::exit(1);
+    });
+    if raw.len() >= 4 && raw[0..4] == binary::MAGIC {
+        return raw;
+    }
+    let program = assemble_file(path);
+    binary::write_object(&Object {
+        entry_point: program.entry_point,
+        code: program.instructions,
+        data: program.data_segment,
+    })
+}
+
 fn run_assembly_source(source: &str, trace: bool, temp_k: f64) {
-    let mut assembler = Assembler::new();
-    let program = match assembler.assemble(source) {
+    let program = match Assembler::new().assemble(source) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("\n[Assembler Error] {}\n", e);
             process::exit(1);
         }
     };
+    let bytes = binary::write_object(&Object {
+        entry_point: program.entry_point,
+        code: program.instructions,
+        data: program.data_segment,
+    });
+    run_object(&bytes, trace, temp_k);
+}
+
+/// Load and execute an `UBIT` object. Both `unibit run` and the embedded demos
+/// go through here, so the encode/decode path is on the hot path rather than
+/// being a side feature that can quietly rot.
+fn run_object(bytes: &[u8], trace: bool, temp_k: f64) {
+    let obj = binary::read_object(bytes).unwrap_or_else(|e| {
+        eprintln!("\n[Object Error] {}\n", e);
+        process::exit(1);
+    });
 
     let mut cpu = Cpu::new(1024 * 1024); // 1 MiB memory
     cpu.trace = trace;
     cpu.temp_k = temp_k;
 
-    // Load data segment into RAM
-    for (addr, bytes) in &program.data_segment {
-        if let Err(e) = cpu.memory.write_bytes(*addr, bytes) {
+    for (addr, seg) in &obj.data {
+        if let Err(e) = cpu.memory.write_bytes(*addr, seg) {
             eprintln!("[Memory Error] Failed loading data at 0x{:x}: {}", addr, e);
             process::exit(1);
         }
     }
 
-    cpu.reset(program.entry_point);
+    cpu.reset(obj.entry_point);
 
     let start = Instant::now();
-    if let Err(e) = cpu.run_program(&program.instructions, 10_000_000) {
+    if let Err(e) = cpu.run_program(&obj.code, 10_000_000) {
         eprintln!("\n[Runtime Trap/Error] {}\n", e);
     }
     let duration = start.elapsed();
@@ -390,6 +485,113 @@ fn run_assembly_source(source: &str, trace: bool, temp_k: f64) {
     // Print final microarchitecture & Landauer report
     cpu.print_report();
     println!("Execution wall time: {:.3?}", duration);
+}
+
+/// Run every program in `programs/` and write one row of measured data per
+/// program to `docs/bench.csv`. Nothing here is estimated: cycles, branches and
+/// mispredictions come from the machine's own counters, wall time from a
+/// monotonic clock over `iterations` repetitions with output captured.
+fn benchmark_suite(iterations: usize) {
+    let mut programs: Vec<String> = std::fs::read_dir("programs")
+        .map(|d| {
+            d.filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .filter(|p| p.extension().map(|x| x == "uasm").unwrap_or(false))
+                .filter_map(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned()))
+                .collect()
+        })
+        .unwrap_or_default();
+    programs.sort();
+
+    if programs.is_empty() {
+        eprintln!("No programs/*.uasm found — run this from the repository root.");
+        process::exit(1);
+    }
+
+    let mut csv = String::from(
+        "program,instructions,branches,\
+cycles_bht,ipc_bht,miss_bht,accuracy_bht,\
+cycles_static,ipc_static,miss_static,accuracy_static,\
+wall_us,mips,bits_destroyed\n",
+    );
+
+    println!("Benchmarking {} programs, {} iterations each\n", programs.len(), iterations);
+    println!("{:<24} {:>10} {:>8} {:>9} {:>9} {:>8}", "program", "insts", "IPC", "BHT acc", "static", "MIPS");
+    println!("{}", "-".repeat(74));
+
+    for name in &programs {
+        let path = format!("programs/{}.uasm", name);
+        let source = match std::fs::read_to_string(&path) {
+            Ok(s) => s,
+            Err(e) => { eprintln!("skip {}: {}", path, e); continue; }
+        };
+        let program = match Assembler::new().assemble(&source) {
+            Ok(p) => p,
+            Err(e) => { eprintln!("skip {}: {}", path, e); continue; }
+        };
+
+        // One run with the predictor, one without: same program, same input,
+        // the only difference is the prediction policy.
+        let run = |predictor: bool| {
+            let mut cpu = Cpu::new(1024 * 1024);
+            cpu.capture_output = true;
+            cpu.predictor_enabled = predictor;
+            for (addr, bytes) in &program.data_segment {
+                let _ = cpu.memory.write_bytes(*addr, bytes);
+            }
+            cpu.reset(program.entry_point);
+            let _ = cpu.run_program(&program.instructions, 10_000_000);
+            cpu
+        };
+
+        let with = run(true);
+        let without = run(false);
+
+        // Wall time, averaged over `iterations` repetitions.
+        let start = Instant::now();
+        for _ in 0..iterations {
+            let _ = run(true);
+        }
+        let wall = start.elapsed() / iterations as u32;
+        let wall_us = wall.as_secs_f64() * 1e6;
+        let mips = if wall_us > 0.0 {
+            with.metrics.instructions_retired as f64 / wall_us
+        } else { 0.0 };
+
+        csv.push_str(&format!(
+            "{},{},{},{},{:.4},{},{:.2},{},{:.4},{},{:.2},{:.1},{:.2},{}\n",
+            name,
+            with.metrics.instructions_retired,
+            with.metrics.branch_count,
+            with.metrics.cycles,
+            with.metrics.ipc(),
+            with.metrics.branch_mispredictions,
+            with.metrics.branch_accuracy(),
+            without.metrics.cycles,
+            without.metrics.ipc(),
+            without.metrics.branch_mispredictions,
+            without.metrics.branch_accuracy(),
+            wall_us,
+            mips,
+            with.metrics.bit_erasures + with.memory.bit_erasures,
+        ));
+
+        println!(
+            "{:<24} {:>10} {:>8.4} {:>8.1}% {:>8.1}% {:>8.2}",
+            name,
+            with.metrics.instructions_retired,
+            with.metrics.ipc(),
+            with.metrics.branch_accuracy(),
+            without.metrics.branch_accuracy(),
+            mips
+        );
+    }
+
+    let _ = std::fs::create_dir_all("docs");
+    match std::fs::write("docs/bench.csv", &csv) {
+        Ok(_) => println!("\nWrote docs/bench.csv"),
+        Err(e) => eprintln!("\nCould not write docs/bench.csv: {}", e),
+    }
 }
 
 fn benchmark_assembly_source(source: &str, iterations: usize) {
@@ -441,14 +643,17 @@ fn print_banner() {
 
 fn print_usage() {
     println!("COMMANDS:");
-    println!("  forja run <file.fja> [--trace] [--temp-k <K>]  Run an assembly program");
-    println!("  forja disasm <file.fja>                       Reverse-engineer & decompile bytecode to ASM + CFG");
-    println!("  forja cfg <file.fja>                          Generate Control Flow Graph & branch map");
-    println!("  forja demo <name> [--trace]                   Run a built-in demo:");
+    println!("  unibit run <file.uasm|file.ubo> [--trace] [--temp-k <K>]
+                                                Run a program or object file");
+    println!("  unibit build <file.uasm> [-o <out.ubo>]        Assemble to an UBIT object file
+  unibit disasm <file.ubo|file.uasm>             Decode bytecode to ASM + CFG + entropy profile");
+    println!("  unibit cfg <file.uasm>                          Generate Control Flow Graph & branch map");
+    println!("  unibit demo <name> [--trace]                   Run a built-in demo:");
     println!("                                                  • fibonacci");
     println!("                                                  • quantum_pqc");
     println!("                                                  • neural_tensor");
-    println!("  forja bench <file.fja>                        Benchmark execution throughput");
-    println!("  forja version                                 Show version information");
-    println!("  forja help                                    Show this help message\n");
+    println!("  unibit bench                                  Benchmark every program, write docs/bench.csv
+  unibit bench <file.uasm>                      Benchmark one program's throughput");
+    println!("  unibit version                                 Show version information");
+    println!("  unibit help                                    Show this help message\n");
 }

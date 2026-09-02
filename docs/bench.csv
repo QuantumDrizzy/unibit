@@ -1,0 +1,7 @@
+program,instructions,branches,cycles_bht,ipc_bht,miss_bht,accuracy_bht,cycles_static,ipc_static,miss_static,accuracy_static,wall_us,mips,bits_destroyed
+fibonacci,323,26,329,0.9818,2,92.31,326,0.9908,1,96.15,36.4,8.88,878
+mandelbrot,265783,34595,276067,0.9627,1160,96.65,276055,0.9628,1156,96.66,5953.5,44.64,3200737
+master_suite,47,0,47,1.0000,0,100.00,47,1.0000,0,100.00,42.0,1.12,583
+mps_ghz_overlap,60,2,66,0.9091,2,0.00,60,1.0000,0,100.00,30.6,1.96,859
+quantum_pqc,29,1,29,1.0000,0,100.00,32,0.9062,1,0.00,37.7,0.77,253
+tensor_network_zipper,24,0,24,1.0000,0,100.00,24,1.0000,0,100.00,28.9,0.83,74

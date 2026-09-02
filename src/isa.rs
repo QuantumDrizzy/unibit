@@ -1,5 +1,5 @@
 // ============================================================================
-// FORJA-256 — Instruction Set Architecture
+// Unibit — Instruction Set Architecture
 // ============================================================================
 //
 // A novel 256-bit post-quantum AI-native processor ISA.
@@ -34,7 +34,7 @@ pub fn landauer_energy(temp_k: f64) -> f64 {
 
 /// A 256-bit register composed of four 64-bit lanes.
 ///
-/// This is the core data type of FORJA-256. Each register can be accessed as:
+/// This is the core data type of Unibit. Each register can be accessed as:
 ///   - Scalar:     1 × 64-bit   (lane 0, default for scalar ops)
 ///   - DWord:      4 × 64-bit   (vector mode)
 ///   - Word:       8 × 32-bit   (AI inference, fp32)
@@ -177,6 +177,32 @@ impl Reg256 {
     pub fn set_complex1(&mut self, re: f64, im: f64) {
         self.lanes[2] = re.to_bits();
         self.lanes[3] = im.to_bits();
+    }
+
+    /// Read one of the eight f32 halves. Eight f32 is exactly 256 bits, which is
+    /// what makes a 2x2 complex transfer matrix fit in one register (see
+    /// `TensorNetworkUnit::zipper2_step`).
+    #[inline]
+    pub fn f32_at(&self, idx: usize) -> f32 {
+        f32::from_bits(self.w(idx))
+    }
+
+    /// Write one of the eight f32 halves.
+    #[inline]
+    pub fn set_f32_at(&mut self, idx: usize, val: f32) {
+        self.set_w(idx, val.to_bits());
+    }
+
+    /// Read one of the 32 bytes as a signed quantization code.
+    #[inline]
+    pub fn i8_at(&self, idx: usize) -> i8 {
+        self.b(idx) as i8
+    }
+
+    /// Write one of the 32 bytes as a signed quantization code.
+    #[inline]
+    pub fn set_i8_at(&mut self, idx: usize, val: i8) {
+        self.set_b(idx, val as u8);
     }
 }
 
@@ -326,7 +352,7 @@ pub enum ActivationFn {
 
 // ─── Instruction Set ─────────────────────────────────────────────────────────
 
-/// The complete FORJA-256 instruction set.
+/// The complete Unibit instruction set.
 ///
 /// Categories:
 ///   SCALAR    — traditional RISC ALU on 64-bit (lane 0)
@@ -338,7 +364,7 @@ pub enum ActivationFn {
 ///   INFO      — information-theoretic operations          [NOVEL]
 ///   COMPLEX   — first-class complex number arithmetic     [NOVEL]
 ///   SYSTEM    — traps, CSRs, fences, halt
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Instruction {
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     // SCALAR ALU — operate on lane 0 (64-bit), like a normal RISC processor
@@ -420,23 +446,27 @@ pub enum Instruction {
     VReduce{ rd: u8, rs1: u8, width: Width },           // sum all lanes → lane 0
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // TENSOR NETWORK / MPS ACCELERATOR (Blaze-native hardware logic)  ◆ NOVEL ◆
+    // TENSOR NETWORK / MPS ACCELERATOR                                ◆ NOVEL ◆
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    Zipper { rd: u8, rs1: u8, rs2: u8 },     // Hardware MPS Zipper contraction step E = Tr(E * B * conj(A))
-    Trunc  { rd: u8, rs1: u8, eps_bits: u64 }, // Dynamic Schmidt singular value truncation below eps threshold
-    TTMul  { rd: u8, rs1: u8, rs2: u8 },     // Tensor-Train core multiplication across bond dimensions
+    // ZIPPER and ZIPPER2 are ACCUMULATOR instructions: unlike every other
+    // three-operand instruction in this ISA, rd is *read* as the incoming
+    // transfer matrix E before being written with the outgoing one.
+    //     zipper  rd, rs1, rs2   ->   rd = rd * sum_d rs1[d] * conj(rs2[d])
+    Zipper { rd: u8, rs1: u8, rs2: u8 },     // MPS zipper contraction step at bond dimension 1
+    Zipper2{ rd: u8, rs1: u8, rs2: u8 },     // MPS zipper step at bond dimension 2 (f32 E, int8 cores)
+    Trunc  { rd: u8, rs1: u8, eps_bits: u64 }, // Schmidt coefficient truncation below eps * max(S)
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     // TENSOR — Neural network / matrix operations                ◆ NOVEL ◆
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    TMul   { rd: u8, rs1: u8, rs2: u8 },                 // 4×4 matrix multiply (f64)
-    TDot   { rd: u8, rs1: u8, rs2: u8 },                 // tensor dot product
+    TMul   { rd: u8, rs1: u8, rs2: u8 },                 // 2×2 f64 matrix multiply (row-major)
+    TDot   { rd: u8, rs1: u8, rs2: u8 },                 // f64 dot product over 4 lanes → lane 0
     TAct   { rd: u8, rs1: u8, func: ActivationFn },      // activation function
     TSoftmax { rd: u8, rs1: u8 },                         // softmax over lanes
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     // LATTICE — Post-quantum cryptographic primitives            ◆ NOVEL ◆
-    // (v0.2 — defined for ISA completeness, stubs in v0.1)
+    // Negacyclic transform over R_q = Z_q[X]/(X^4+1); see alu::LatticeUnit.
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     Ntt    { rd: u8, rs1: u8 },                    // Number Theoretic Transform
     InvNtt { rd: u8, rs1: u8 },                    // Inverse NTT
@@ -478,50 +508,16 @@ pub enum Instruction {
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     Mv     { rd: u8, rs1: u8 },          // rd = rs1 (alias for ADDI rd, rs1, 0)
     Li     { rd: u8, imm: i64 },         // load immediate (pseudo-instruction)
-    La     { rd: u8, label: String },     // load address (resolved by assembler)
+    // `la rd, label` is not a variant: the assembler resolves the label and
+    // emits Li, so no unresolved symbol can ever reach the execution stage.
 }
 
 impl Instruction {
-    /// Returns the destination register, if any (for hazard detection)
-    pub fn dest_reg(&self) -> Option<u8> {
-        match self {
-            Self::Add { rd, .. } | Self::Sub { rd, .. } | Self::Mul { rd, .. } |
-            Self::MulH { rd, .. } | Self::Div { rd, .. } | Self::Rem { rd, .. } |
-            Self::And { rd, .. } | Self::Or { rd, .. } | Self::Xor { rd, .. } |
-            Self::Sll { rd, .. } | Self::Srl { rd, .. } | Self::Sra { rd, .. } |
-            Self::Slt { rd, .. } | Self::Sltu { rd, .. } |
-            Self::Addi { rd, .. } | Self::Andi { rd, .. } | Self::Ori { rd, .. } |
-            Self::Xori { rd, .. } | Self::Slli { rd, .. } | Self::Srli { rd, .. } |
-            Self::Srai { rd, .. } | Self::Slti { rd, .. } | Self::Sltiu { rd, .. } |
-            Self::Lui { rd, .. } |
-            Self::Ld { rd, .. } | Self::Lw { rd, .. } | Self::Lh { rd, .. } |
-            Self::Lb { rd, .. } | Self::Lbu { rd, .. } | Self::Lq { rd, .. } |
-            Self::Jal { rd, .. } | Self::Jalr { rd, .. } |
-            Self::VAdd { rd, .. } | Self::VSub { rd, .. } | Self::VMul { rd, .. } |
-            Self::VAnd { rd, .. } | Self::VOr { rd, .. } | Self::VXor { rd, .. } |
-            Self::VNot { rd, .. } | Self::VDot { rd, .. } | Self::VSplat { rd, .. } |
-            Self::VReduce { rd, .. } |
-            Self::Zipper { rd, .. } | Self::Trunc { rd, .. } | Self::TTMul { rd, .. } |
-            Self::TMul { rd, .. } | Self::TDot { rd, .. } | Self::TAct { rd, .. } |
-            Self::TSoftmax { rd, .. } |
-            Self::Ntt { rd, .. } | Self::InvNtt { rd, .. } | Self::PolyMul { rd, .. } |
-            Self::ModRed { rd, .. } | Self::PolyAdd { rd, .. } |
-            Self::Entropy { rd, .. } | Self::Hamming { rd, .. } | Self::PopCnt { rd, .. } |
-            Self::QRand { rd, .. } |
-            Self::CAdd { rd, .. } | Self::CSub { rd, .. } | Self::CMul { rd, .. } |
-            Self::CConj { rd, .. } | Self::CNorm { rd, .. } | Self::CMag { rd, .. } |
-            Self::CsrR { rd, .. } |
-            Self::Mv { rd, .. } | Self::Li { rd, .. } | Self::La { rd, .. } => {
-                if *rd == 0 { None } else { Some(*rd) }
-            }
-            _ => None,
-        }
-    }
 }
 
 // ─── CSR (Control and Status Registers) ──────────────────────────────────────
 
-/// CSR addresses for FORJA-256
+/// CSR addresses for Unibit
 pub mod csr {
     pub const CYCLE: u16       = 0xC00;  // Cycle counter (read-only)
     pub const INSTRET: u16     = 0xC02;  // Instructions retired (read-only)
@@ -539,6 +535,7 @@ pub mod syscall {
     pub const PRINT_STR: u64    = 3;   // a0 = address, a1 = length
     pub const PRINT_HEX: u64    = 4;   // a0 = integer to print as hex
     pub const PRINT_F64: u64    = 5;   // a0 = f64 bits to print
+    pub const PRINT_STRZ: u64   = 6;   // a0 = address of NUL-terminated string
     pub const READ_INT: u64     = 10;  // a0 = read integer from stdin
     pub const PRINT_REG256: u64 = 20;  // a0 = register index, prints full 256-bit
     pub const EXIT: u64         = 93;  // a0 = exit code
@@ -574,6 +571,22 @@ mod tests {
         assert_eq!(r.b(0), 0xAB);
         assert_eq!(r.b(7), 0xCD);
         assert_eq!(r.b(1), 0x00);
+    }
+
+    #[test]
+    fn test_reg256_lane_accessors() {
+        // d/set_d are the 64-bit half of the symmetric lane API.
+        let mut r = Reg256::ZERO;
+        for lane in 0..4 {
+            r.set_d(lane, 0x1122_3344_5566_7700 | lane as u64);
+        }
+        for lane in 0..4 {
+            assert_eq!(r.d(lane), 0x1122_3344_5566_7700 | lane as u64);
+        }
+        // The lane index wraps at 4, matching the other accessors.
+        assert_eq!(r.d(4), r.d(0));
+        r.set_d(5, 0xDEAD);
+        assert_eq!(r.d(1), 0xDEAD);
     }
 
     #[test]

@@ -1,14 +1,14 @@
 ; ============================================================================
-; FORJA-256 — Tensor-Network Hardware Zipper Contraction (Blaze Native)
+; Unibit — Tensor-Network Hardware Zipper Contraction
 ; ============================================================================
 ;
-; Implements the Blaze MPS Zipper Contraction in hardware instructions:
+; Implements an MPS zipper contraction step in hardware instructions:
 ; Calculates <psi_A | psi_B> overlap step directly on low-rank TT cores
 ; using the native `zipper` instruction, without decompressing dense state!
 ; ============================================================================
 
         .data
-title:  .asciiz "\n=== FORJA-256: Tensor-Network Hardware Zipper (Blaze Engine) ===\n"
+title:  .asciiz "\n=== Unibit: Tensor-Network Hardware Zipper ===\n"
 msg_e0: .asciiz "[Step 1] Initializing MPS Transfer Matrix E = 1.0 + 0.0i (Boundary)\n"
 msg_z1: .asciiz "[Step 2] Executing Hardware `zipper` Instruction on Tensor-Train Cores...\n"
 msg_res:.asciiz "[Step 3] Contracted Overlap State Register:\n         "
@@ -20,13 +20,11 @@ nl:     .asciiz "\n"
 
 _start:
         la    a0, title
-        li    a1, 65
-        li    a7, 3          ; print_str
+        li    a7, 6          ; print_strz (NUL-terminated)
         ecall
 
         la    a0, msg_e0
-        li    a1, 67
-        li    a7, 3
+        li    a7, 6          ; print_strz (NUL-terminated)
         ecall
 
         ; 1. Set Transfer Matrix E in s0 = [1.0 + 0.0i]
@@ -41,16 +39,14 @@ _start:
         mv    s2, t0
 
         la    a0, msg_z1
-        li    a1, 71
-        li    a7, 3
+        li    a7, 6          ; print_strz (NUL-terminated)
         ecall
 
         ; 3. Execute Hardware Zipper Contraction: E_next = zipper(E, B, A)
         zipper s0, s1, s2
 
         la    a0, msg_res
-        li    a1, 52
-        li    a7, 3
+        li    a7, 6          ; print_strz (NUL-terminated)
         ecall
 
         li    a0, 8          ; print s0 (reg 8)
@@ -58,8 +54,7 @@ _start:
         ecall
 
         la    a0, msg_ok
-        li    a1, 73
-        li    a7, 3
+        li    a7, 6          ; print_strz (NUL-terminated)
         ecall
 
         halt

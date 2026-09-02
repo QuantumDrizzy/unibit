@@ -1,0 +1,153 @@
+; ============================================================================
+; Unibit — MPS overlap <GHZ'_4|i+^4> on the chi = 2 zipper
+; ============================================================================
+;
+; Contracts two 4-site matrix product states with the ZIPPER2 instruction and
+; checks the result against a value known analytically.
+;
+;     |GHZ'_4> = (|0000> + i|1111>) / sqrt(2)      <- phase on the all-ones branch
+;     |i+>^4   = (1/4) * sum_x i^|x| |x>
+;
+;     <GHZ'_4|i+^4> = (1/sqrt2)(1/4)(1 - i) = (1 - i)/(4*sqrt2)   [i^4 = 1]
+;                  = 0.17677670 - 0.17677670 i
+;
+; Two properties make this a real golden rather than a decorative one:
+;
+;   1. It needs the OFF-DIAGONAL elements of the transfer matrix. <GHZ|GHZ> = 1
+;      would not work: every normalised state gives 1, chi = 1 included, so it
+;      cannot tell a correct chi = 2 contraction from a broken one.
+;
+;   2. BOTH states carry a phase. A phase on the bra alone is not enough: the
+;      accumulated E stays real, so t.im is zero exactly where conj(A).im is
+;      non-zero, and the term conj(A).im * t.im is never evaluated.
+;
+; Measured reach, via tools/mutation_test.py: perturbing each of the eight
+; product terms of the contraction by 5%, this program catches 6 of 8. The two
+; it misses -- stage1 im: e_im*b_re, and stage2 re: a_im*t_im -- still vanish
+; for this pair of states. The random-MPS ablation in the unit tests catches
+; all 8, so the suite is the safety net and this program is the demo.
+;
+; ZIPPER2 is an accumulator instruction: rd is read as the incoming transfer
+; matrix E and written with the outgoing one.
+;
+;     zipper2 rd, rs1, rs2     rd <- sum conj(A[rs2]) * rd * B[rs1]
+;
+; Cores are pre-packed into the instruction's int8-plus-scale layout; E is a
+; 2x2 complex f32 matrix. See TensorNetworkUnit::pack_core.
+
+        .data
+
+        ; E boundary = [[1,0],[0,0]]
+ebnd:   .dword 0x000000003F800000, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000
+
+        ; |GHZ'_4> cores: (1,2,2) head, (2,2,2) middle, (2,2,1) tail, zero-padded.
+        ; The tail carries the i on the all-ones branch.
+ghz_h:  .dword 0x007F00000000007F, 0x0000000000000000, 0x3C0102043C010204, 0x0000000000000000
+ghz_m:  .dword 0x000000000000007F, 0x007F000000000000, 0x3C0102043C010204, 0x0000000000000000
+ghz_t:  .dword 0x000000000000007F, 0x00007F0000000000, 0x3F8000003BB671D7, 0x0000000000000000
+
+        ; |i+>^4 core, identical at every site. The ket carries a phase too, so E
+        ; is complex from site 1 on and the bra's imaginary entry meets a complex
+        ; partial sum. With a real ket the term conj(A).im * t.im is never reached.
+plus:   .dword 0x00007F000000007F, 0x0000000000000000, 0x3F8000003BB671D7, 0x0000000000000000
+
+msg_t:  .asciiz "=== Unibit: chi=2 MPS contraction (ZIPPER2) ===\n"
+msg_1:  .asciiz "[1] Contracting <GHZ'_4|i+^4> over 4 sites, bond dimension 2\n"
+msg_2:  .asciiz "[2] Transfer matrix after the last site:\n         "
+msg_3:  .asciiz "\n[3] Re E[0][0] f32 bits: "
+msg_4:  .asciiz "   Im E[0][0] f32 bits: "
+msg_ok: .asciiz "\n[OK] Overlap matches (1-i)/(4*sqrt2) within 4096 ULP on both parts.\n"
+msg_no: .asciiz "\n[FAIL] Overlap does not match (1-i)/(4*sqrt2).\n"
+
+        .text
+        .global _start
+
+_start:
+        la      a0, msg_t
+        li      a7, 6
+        ecall
+        la      a0, msg_1
+        li      a7, 6
+        ecall
+
+        ; ── Load the boundary transfer matrix and the two core sets ──
+        la      t0, ebnd
+        lq      s0, 0(t0)          ; s0 = E, the accumulator
+        la      t0, plus
+        lq      s1, 0(t0)          ; s1 = |i+> core (the ket, same every site)
+        la      t0, ghz_h
+        lq      s2, 0(t0)
+        la      t0, ghz_m
+        lq      s3, 0(t0)
+        la      t0, ghz_t
+        lq      s4, 0(t0)
+
+        ; ── Four zipper steps: head, middle, middle, tail ──
+        zipper2 s0, s1, s2
+        zipper2 s0, s1, s3
+        zipper2 s0, s1, s3
+        zipper2 s0, s1, s4
+
+        la      a0, msg_2
+        li      a7, 6
+        ecall
+        li      a0, 8              ; print s0 (= x8)
+        li      a7, 20
+        ecall
+
+        ; ── Split lane 0 into its two f32 words ──
+        ;     word 0 = Re E[0][0]  (low 32 bits)
+        ;     word 1 = Im E[0][0]  (high 32 bits)
+        mv      t0, s0
+        li      t1, 0xFFFFFFFF
+        and     s5, t0, t1         ; s5 = Re bits
+        srli    s6, t0, 32
+        and     s6, s6, t1         ; s6 = Im bits
+
+        la      a0, msg_3
+        li      a7, 6
+        ecall
+        mv      a0, s5
+        li      a7, 4              ; print_hex
+        ecall
+        la      a0, msg_4
+        li      a7, 6
+        ecall
+        mv      a0, s6
+        li      a7, 4
+        ecall
+
+        ; ── Compare both parts against (1-i)/(4*sqrt2) ──
+        ; IEEE-754 bit patterns are monotonic within a sign, so the distance
+        ; between two same-signed patterns is an exact ULP count. 4096 ULP is
+        ; 4.9e-05 absolute here: far tighter than any wrong contraction, far
+        ; looser than the int8 quantisation noise on the cores.
+        li      s7, 4096
+
+        li      t3, 0x3E3504F3     ; +1/(4*sqrt2)
+        sub     t4, s5, t3
+        srai    t5, t4, 63
+        xor     t4, t4, t5
+        sub     t4, t4, t5         ; |Re - expected|, in ULP
+        bgeu    t4, s7, bad
+
+        li      t3, 0xBE3504F3     ; -1/(4*sqrt2)
+        sub     t4, s6, t3
+        srai    t5, t4, 63
+        xor     t4, t4, t5
+        sub     t4, t4, t5         ; |Im - expected|, in ULP
+        bgeu    t4, s7, bad
+
+        la      a0, msg_ok
+        li      a7, 6
+        ecall
+        halt
+
+bad:
+        la      a0, msg_no
+        li      a7, 6
+        ecall
+        li      a0, 1
+        li      a7, 93             ; exit(1)
+        ecall
+        halt

@@ -1,9 +1,9 @@
 ; ============================================================================
-; FORJA-256 — Master Architectural Verification Suite
+; Unibit — Master Architectural Verification Suite
 ; ============================================================================
 
         .data
-banner:   .asciiz "=== FORJA-256: MASTER ARCHITECTURAL VERIFICATION SUITE ===\n"
+banner:   .asciiz "=== Unibit: MASTER ARCHITECTURAL VERIFICATION SUITE ===\n"
 msg_t1:   .asciiz "[1/5] Information Theory: 256-bit Shannon Entropy: "
 msg_bits: .asciiz " bits\n"
 msg_t2:   .asciiz "[2/5] Quantum Complex Algebra: Rotated State Vector:\n      "
@@ -19,8 +19,7 @@ nl:       .asciiz "\n"
 _start:
         ; ── Banner ──
         la    a0, banner
-        li    a1, 59
-        li    a7, 3
+        li    a7, 6          ; print_strz (NUL-terminated)
         ecall
 
         ; ── 1. Information Theory ──
@@ -28,8 +27,7 @@ _start:
         entropy t1, t0             ; Shannon entropy in bits (f64)
 
         la    a0, msg_t1
-        li    a1, 51
-        li    a7, 3
+        li    a7, 6          ; print_strz (NUL-terminated)
         ecall
 
         mv    a0, t1
@@ -37,8 +35,7 @@ _start:
         ecall
 
         la    a0, msg_bits
-        li    a1, 6
-        li    a7, 3
+        li    a7, 6          ; print_strz (NUL-terminated)
         ecall
 
         ; ── 2. Quantum Complex Arithmetic ──
@@ -46,8 +43,7 @@ _start:
         cconj t3, t2               ; Conjugate state
 
         la    a0, msg_t2
-        li    a1, 59
-        li    a7, 3
+        li    a7, 6          ; print_strz (NUL-terminated)
         ecall
 
         li    a0, 28               ; print t3
@@ -55,8 +51,7 @@ _start:
         ecall
 
         la    a0, nl
-        li    a1, 1
-        li    a7, 3
+        li    a7, 6          ; print_strz (NUL-terminated)
         ecall
 
         ; ── 3. Post-Quantum Lattice Cryptography ──
@@ -65,19 +60,17 @@ _start:
         invntt  t6, t5             ; Inverse NTT
 
         la    a0, msg_t3
-        li    a1, 63
-        li    a7, 3
+        li    a7, 6          ; print_strz (NUL-terminated)
         ecall
 
-        ; ── 4. Tensor-Network MPS Accelerator (Blaze Native) ──
+        ; ── 4. Tensor-Network MPS Accelerator ──
         li    s0, 0x3FF0000000000000 ; Boundary E = 1.0 + 0.0i
         mv    s1, s0                 ; Core B
         mv    s2, s0                 ; Core A
         zipper s0, s1, s2            ; Single-cycle MPS zipper contraction step
 
         la    a0, msg_t4
-        li    a1, 68
-        li    a7, 3
+        li    a7, 6          ; print_strz (NUL-terminated)
         ecall
 
         ; ── 5. Neural Tensor SIMD Unit ──
@@ -85,14 +78,12 @@ _start:
         tsoftmax s4, s3            ; Softmax distribution
 
         la    a0, msg_t5
-        li    a1, 66
-        li    a7, 3
+        li    a7, 6          ; print_strz (NUL-terminated)
         ecall
 
         ; ── Completion ──
         la    a0, msg_done
-        li    a1, 64
-        li    a7, 3
+        li    a7, 6          ; print_strz (NUL-terminated)
         ecall
 
         halt
