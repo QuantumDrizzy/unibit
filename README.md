@@ -303,4 +303,7 @@ unibit/
 
 ## Licence
 
-MIT
+Proprietary. Copyright (c) 2026 Antonio Zambudio Rodriguez, all rights
+reserved. See [LICENSE](LICENSE). Visibility of this repository does not
+grant a licence to use, copy or derive from it; contact the author for
+licensing enquiries.

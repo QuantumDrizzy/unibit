@@ -3,7 +3,8 @@ name = "unibit"
 version = "0.1.0"
 edition = "2021"
 description = "Unibit: Post-quantum AI-native 256-bit processor architecture"
-license = "MIT"
+license-file = "LICENSE"
+publish = false
 
 # Zero dependencies. Pure Rust. Bare-metal spirit.
 [dependencies]
