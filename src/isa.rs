@@ -560,6 +560,18 @@ pub mod syscall {
     pub const PRINT_HEX: u64    = 4;   // a0 = integer to print as hex
     pub const PRINT_F64: u64    = 5;   // a0 = f64 bits to print
     pub const PRINT_STRZ: u64   = 6;   // a0 = address of NUL-terminated string
+    /// a0 = f32 bits in the low 32. Printed **shortest round-trip**, not to fixed precision.
+    ///
+    /// The machine has had eight f32 lanes and packed arithmetic over them since the float
+    /// unit landed, and no way to print one: PRINT_F64 takes f64 bits and there is no
+    /// conversion instruction to make them from an f32. Same shape of gap as the arithmetic
+    /// itself had.
+    ///
+    /// The formatting is part of the syscall. PRINT_F64 beside it prints {:.6}, which cannot
+    /// be read back -- two different f64 print the same eight characters. A program whose
+    /// output is checked against a host oracle needs its floats to survive the trip, so this
+    /// one emits the shortest string that parses back to the same bits.
+    pub const PRINT_F32: u64    = 7;
     pub const READ_INT: u64     = 10;  // a0 = read integer from stdin
     pub const PRINT_REG256: u64 = 20;  // a0 = register index, prints full 256-bit
     pub const EXIT: u64         = 93;  // a0 = exit code

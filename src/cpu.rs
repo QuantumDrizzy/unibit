@@ -831,6 +831,12 @@ impl Cpu {
                 let text = String::from_utf8_lossy(self.memory.read_cstr(addr)?).into_owned();
                 self.emit_output(text);
             }
+            syscall::PRINT_F32 => {
+                let val = f32::from_bits(self.get_reg(REG_A0).as_u64() as u32);
+                // `{}`, not `{:.6}`: Rust prints the shortest string that round-trips, so a
+                // program's output can be parsed back to the exact bits it computed.
+                self.emit_output(format!("{}", val));
+            }
             syscall::PRINT_HEX => {
                 let val = self.get_reg(REG_A0).as_u64();
                 self.emit_output(format!("0x{:016x}", val));
