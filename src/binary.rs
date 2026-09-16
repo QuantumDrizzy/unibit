@@ -128,6 +128,16 @@ pub mod op {
     pub const CCONJ:     u8 = 72;
     pub const CNORM:     u8 = 73;
     pub const CMAG:      u8 = 74;
+
+    // Packed single-precision. Appended rather than slotted in beside VADD, because an
+    // object file built before these existed must still decode: renumbering an opcode
+    // silently changes what an old `.ubo` means.
+    pub const VFADD:     u8 = 84;
+    pub const VFSUB:     u8 = 85;
+    pub const VFMUL:     u8 = 86;
+    pub const VFMA:      u8 = 87;
+    pub const VFMAX:     u8 = 88;
+    pub const VFMIN:     u8 = 89;
     pub const ECALL:     u8 = 75;
     pub const HALT:      u8 = 76;
     pub const NOP:       u8 = 77;
@@ -249,6 +259,12 @@ pub fn encode_instruction(inst: &Instruction) -> [u8; INSTRUCTION_BYTES] {
         Instruction::Jal { rd, offset } => Fields { op: op::JAL, rd: *rd, rs1: 0, rs2: 0, aux: 0, imm: *offset },
         Instruction::Jalr { rd, rs1, offset } => Fields { op: op::JALR, rd: *rd, rs1: *rs1, rs2: 0, aux: 0, imm: *offset },
         Instruction::VAdd { rd, rs1, rs2, width } => Fields { op: op::VADD, rd: *rd, rs1: *rs1, rs2: *rs2, aux: width_code(*width), imm: 0 },
+        Instruction::VfAdd { rd, rs1, rs2 } => Fields { op: op::VFADD, rd: *rd, rs1: *rs1, rs2: *rs2, aux: 0, imm: 0 },
+        Instruction::VfSub { rd, rs1, rs2 } => Fields { op: op::VFSUB, rd: *rd, rs1: *rs1, rs2: *rs2, aux: 0, imm: 0 },
+        Instruction::VfMul { rd, rs1, rs2 } => Fields { op: op::VFMUL, rd: *rd, rs1: *rs1, rs2: *rs2, aux: 0, imm: 0 },
+        Instruction::VfMa  { rd, rs1, rs2 } => Fields { op: op::VFMA,  rd: *rd, rs1: *rs1, rs2: *rs2, aux: 0, imm: 0 },
+        Instruction::VfMax { rd, rs1, rs2 } => Fields { op: op::VFMAX, rd: *rd, rs1: *rs1, rs2: *rs2, aux: 0, imm: 0 },
+        Instruction::VfMin { rd, rs1, rs2 } => Fields { op: op::VFMIN, rd: *rd, rs1: *rs1, rs2: *rs2, aux: 0, imm: 0 },
         Instruction::VSub { rd, rs1, rs2, width } => Fields { op: op::VSUB, rd: *rd, rs1: *rs1, rs2: *rs2, aux: width_code(*width), imm: 0 },
         Instruction::VMul { rd, rs1, rs2, width } => Fields { op: op::VMUL, rd: *rd, rs1: *rs1, rs2: *rs2, aux: width_code(*width), imm: 0 },
         Instruction::VDot { rd, rs1, rs2, width } => Fields { op: op::VDOT, rd: *rd, rs1: *rs1, rs2: *rs2, aux: width_code(*width), imm: 0 },
@@ -364,6 +380,12 @@ pub fn decode_instruction(bytes: &[u8]) -> Result<Instruction, String> {
         op::JAL => Instruction::Jal { rd: f.rd, offset: f.imm },
         op::JALR => Instruction::Jalr { rd: f.rd, rs1: f.rs1, offset: f.imm },
         op::VADD => Instruction::VAdd { rd: f.rd, rs1: f.rs1, rs2: f.rs2, width: width_from_code(f.aux)? },
+        op::VFADD => Instruction::VfAdd { rd: f.rd, rs1: f.rs1, rs2: f.rs2 },
+        op::VFSUB => Instruction::VfSub { rd: f.rd, rs1: f.rs1, rs2: f.rs2 },
+        op::VFMUL => Instruction::VfMul { rd: f.rd, rs1: f.rs1, rs2: f.rs2 },
+        op::VFMA  => Instruction::VfMa  { rd: f.rd, rs1: f.rs1, rs2: f.rs2 },
+        op::VFMAX => Instruction::VfMax { rd: f.rd, rs1: f.rs1, rs2: f.rs2 },
+        op::VFMIN => Instruction::VfMin { rd: f.rd, rs1: f.rs1, rs2: f.rs2 },
         op::VSUB => Instruction::VSub { rd: f.rd, rs1: f.rs1, rs2: f.rs2, width: width_from_code(f.aux)? },
         op::VMUL => Instruction::VMul { rd: f.rd, rs1: f.rs1, rs2: f.rs2, width: width_from_code(f.aux)? },
         op::VDOT => Instruction::VDot { rd: f.rd, rs1: f.rs1, rs2: f.rs2, width: width_from_code(f.aux)? },

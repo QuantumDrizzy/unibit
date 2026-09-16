@@ -231,6 +231,12 @@ fn format_instruction(inst: &Instruction, pc: u64, symbols: &HashMap<u64, String
         }
 
         Instruction::VAdd { rd, rs1, rs2, width } => format!("vadd{}   {}, {}, {}", width, reg_name(*rd), reg_name(*rs1), reg_name(*rs2)),
+        Instruction::VfAdd { rd, rs1, rs2 } => format!("vfadd   {}, {}, {}", reg_name(*rd), reg_name(*rs1), reg_name(*rs2)),
+        Instruction::VfSub { rd, rs1, rs2 } => format!("vfsub   {}, {}, {}", reg_name(*rd), reg_name(*rs1), reg_name(*rs2)),
+        Instruction::VfMul { rd, rs1, rs2 } => format!("vfmul   {}, {}, {}", reg_name(*rd), reg_name(*rs1), reg_name(*rs2)),
+        Instruction::VfMa  { rd, rs1, rs2 } => format!("vfma    {}, {}, {}", reg_name(*rd), reg_name(*rs1), reg_name(*rs2)),
+        Instruction::VfMax { rd, rs1, rs2 } => format!("vfmax   {}, {}, {}", reg_name(*rd), reg_name(*rs1), reg_name(*rs2)),
+        Instruction::VfMin { rd, rs1, rs2 } => format!("vfmin   {}, {}, {}", reg_name(*rd), reg_name(*rs1), reg_name(*rs2)),
         Instruction::VSub { rd, rs1, rs2, width } => format!("vsub{}   {}, {}, {}", width, reg_name(*rd), reg_name(*rs1), reg_name(*rs2)),
         Instruction::VMul { rd, rs1, rs2, width } => format!("vmul{}   {}, {}, {}", width, reg_name(*rd), reg_name(*rs1), reg_name(*rs2)),
         Instruction::VAnd { rd, rs1, rs2 } => format!("vand     {}, {}, {}", reg_name(*rd), reg_name(*rs1), reg_name(*rs2)),

@@ -361,6 +361,18 @@ impl Assembler {
                 Ok(Instruction::Jalr { rd, rs1, offset })
             }
 
+            // ─── Packed single-precision ─────────────────────────────────────
+            //
+            // No width suffix: f32 is 32 bits, so `vfadd.w` would be the only spelling and
+            // `vfadd.b` would have to be rejected at parse time. A mnemonic that admits one
+            // suffix is a mnemonic with no suffix.
+            "vfadd" => Ok(Instruction::VfAdd { rd: parse_reg(0, "vfadd")?, rs1: parse_reg(1, "vfadd")?, rs2: parse_reg(2, "vfadd")? }),
+            "vfsub" => Ok(Instruction::VfSub { rd: parse_reg(0, "vfsub")?, rs1: parse_reg(1, "vfsub")?, rs2: parse_reg(2, "vfsub")? }),
+            "vfmul" => Ok(Instruction::VfMul { rd: parse_reg(0, "vfmul")?, rs1: parse_reg(1, "vfmul")?, rs2: parse_reg(2, "vfmul")? }),
+            "vfma"  => Ok(Instruction::VfMa  { rd: parse_reg(0, "vfma")?,  rs1: parse_reg(1, "vfma")?,  rs2: parse_reg(2, "vfma")?  }),
+            "vfmax" => Ok(Instruction::VfMax { rd: parse_reg(0, "vfmax")?, rs1: parse_reg(1, "vfmax")?, rs2: parse_reg(2, "vfmax")? }),
+            "vfmin" => Ok(Instruction::VfMin { rd: parse_reg(0, "vfmin")?, rs1: parse_reg(1, "vfmin")?, rs2: parse_reg(2, "vfmin")? }),
+
             // ─── Vector SIMD Instructions ────────────────────────────────────
             "vadd" | "vadd.b" | "vadd.h" | "vadd.w" | "vadd.d" => {
                 let width = parse_width_suffix(&mnemonic_lower);

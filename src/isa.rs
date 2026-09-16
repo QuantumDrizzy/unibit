@@ -435,6 +435,20 @@ pub enum Instruction {
     // VECTOR — SIMD on all lanes at specified width              ◆ NOVEL ◆
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     VAdd   { rd: u8, rs1: u8, rs2: u8, width: Width },
+
+    // ─── Packed single-precision ─────────────────────────────────────────────
+    //
+    // Eight f32 lanes, which is what `Width::B32` has always been documented as. These carry
+    // no `Width`: single precision is 32 bits by definition, so a width suffix would be a
+    // field with one legal value, and a field with one legal value is a field that will
+    // eventually be set to the other one.
+    VfAdd  { rd: u8, rs1: u8, rs2: u8 },
+    VfSub  { rd: u8, rs1: u8, rs2: u8 },
+    VfMul  { rd: u8, rs1: u8, rs2: u8 },
+    /// `rd = rs1 * rs2 + rd`, fused: one rounding, not two.
+    VfMa   { rd: u8, rs1: u8, rs2: u8 },
+    VfMax  { rd: u8, rs1: u8, rs2: u8 },
+    VfMin  { rd: u8, rs1: u8, rs2: u8 },
     VSub   { rd: u8, rs1: u8, rs2: u8, width: Width },
     VMul   { rd: u8, rs1: u8, rs2: u8, width: Width },
     VAnd   { rd: u8, rs1: u8, rs2: u8 },  // bitwise across full 256-bit

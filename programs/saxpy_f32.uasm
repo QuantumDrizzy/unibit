@@ -1,0 +1,80 @@
+; saxpy over eight packed f32 lanes: y = a*x + y, in one instruction.
+;
+; This program exists because until now it could not be written. `Width::B32` was documented
+; as "8 lanes x 32-bit (AI training, fp32)" and `Reg256` carried `f32_at`/`set_f32_at`, but
+; every arithmetic instruction in the machine was integer except the two-lane complex unit --
+; eight floats fitted in a register and nothing could add them.
+;
+; The kernel is the whole of it:
+;
+;       vfmul   t3, t0, t1      ; a * x, eight lanes
+;       vfadd   t3, t3, t2      ; + y
+;
+; or, fused into one rounding and one instruction:
+;
+;       vfma    t2, t0, t1      ; t2 = t0*t1 + t2
+;
+; Both are here, and the program prints both results so the difference is visible rather than
+; asserted. `VFMA` rounds once; the pair rounds twice, and over an accumulation that is a
+; different function -- which is the same reason LYTH refuses to fuse a contraction's
+; multiply-add unless asked.
+
+        .data
+
+; a = 2.5 broadcast, as raw f32 bits: 0x40200000
+; All eight on one line. Split across two `.word` directives the second half did not land
+; where the first ended, and `LQ` read four of my floats followed by four bytes of the message
+; that happened to sit next to them -- which assembled, ran, and printed numbers.
+avec:   .word 0x40200000, 0x40200000, 0x40200000, 0x40200000, 0x40200000, 0x40200000, 0x40200000, 0x40200000
+
+; x = 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0
+xvec:   .word 0x3F800000, 0x40000000, 0x40400000, 0x40800000, 0x40A00000, 0x40C00000, 0x40E00000, 0x41000000
+
+; y = 0.5 broadcast: 0x3F000000
+yvec:   .word 0x3F000000, 0x3F000000, 0x3F000000, 0x3F000000, 0x3F000000, 0x3F000000, 0x3F000000, 0x3F000000
+
+msg1:   .asciiz "unfused  a*x then +y : "
+msg2:   .asciiz "fused    vfma        : "
+nl:     .asciiz "\n"
+
+        .text
+        .global _start
+
+_start:
+        ; Load the three vectors. LQ is a full 256-bit load: eight f32 in one go.
+        la      t4, avec
+        lq      t0, 0(t4)
+        la      t4, xvec
+        lq      t1, 0(t4)
+        la      t4, yvec
+        lq      t2, 0(t4)
+
+        ; --- unfused: two instructions, two roundings -----------------------
+        vfmul   t3, t0, t1
+        vfadd   t3, t3, t2
+
+        la      a0, msg1
+        li      a7, 6
+        ecall
+        li      a0, 28                 ; t3 is x28, not x3 -- PRINT_REG256 takes the index
+        li      a7, 20                 ; print_reg256
+        ecall
+        la      a0, nl
+        li      a7, 6
+        ecall
+
+        ; --- fused: one instruction, one rounding ---------------------------
+        ; VFMA accumulates into rd, so t2 (which holds y) becomes a*x + y.
+        vfma    t2, t0, t1
+
+        la      a0, msg2
+        li      a7, 6
+        ecall
+        li      a0, 7                  ; t2 is x7
+        li      a7, 20
+        ecall
+        la      a0, nl
+        li      a7, 6
+        ecall
+
+        halt

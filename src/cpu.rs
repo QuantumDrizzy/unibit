@@ -88,6 +88,10 @@ pub struct CpuMetrics {
     pub data_forwards: u64,
     pub bit_erasures: u64,
     pub vector_ops: u64,
+    /// Packed single-precision instructions retired. Counted apart from `vector_ops`
+    /// deliberately: the cost model exists to tell eight f32 multiplies from eight integer
+    /// ones, and one bucket for both is a cost model about a machine that does not exist.
+    pub float_ops: u64,
     pub complex_ops: u64,
     pub lattice_ops: u64,
     pub tensor_ops: u64,
@@ -465,6 +469,52 @@ impl Cpu {
             }
 
             // ─── Vector Instructions ─────────────────────────────────────────
+            // Packed single-precision. Counted as `float_ops` rather than `vector_ops`: the
+            // cost model exists to tell these apart, and folding eight f32 multiplies into
+            // the same bucket as eight integer ones is how a cost model stops describing the
+            // machine it is about.
+            Instruction::VfAdd { rd, rs1, rs2 } => {
+                let res = FloatUnit::vfadd(&self.get_reg(*rs1), &self.get_reg(*rs2));
+                self.set_reg(*rd, res);
+                self.metrics.float_ops += 1;
+                self.pc = next_pc;
+            }
+            Instruction::VfSub { rd, rs1, rs2 } => {
+                let res = FloatUnit::vfsub(&self.get_reg(*rs1), &self.get_reg(*rs2));
+                self.set_reg(*rd, res);
+                self.metrics.float_ops += 1;
+                self.pc = next_pc;
+            }
+            Instruction::VfMul { rd, rs1, rs2 } => {
+                let res = FloatUnit::vfmul(&self.get_reg(*rs1), &self.get_reg(*rs2));
+                self.set_reg(*rd, res);
+                self.metrics.float_ops += 1;
+                self.pc = next_pc;
+            }
+            Instruction::VfMa { rd, rs1, rs2 } => {
+                // `rd` is the addend as well as the destination, which is what makes this an
+                // accumulate rather than a three-operand multiply-add.
+                let res = FloatUnit::vfma(
+                    &self.get_reg(*rs1),
+                    &self.get_reg(*rs2),
+                    &self.get_reg(*rd),
+                );
+                self.set_reg(*rd, res);
+                self.metrics.float_ops += 1;
+                self.pc = next_pc;
+            }
+            Instruction::VfMax { rd, rs1, rs2 } => {
+                let res = FloatUnit::vfmax(&self.get_reg(*rs1), &self.get_reg(*rs2));
+                self.set_reg(*rd, res);
+                self.metrics.float_ops += 1;
+                self.pc = next_pc;
+            }
+            Instruction::VfMin { rd, rs1, rs2 } => {
+                let res = FloatUnit::vfmin(&self.get_reg(*rs1), &self.get_reg(*rs2));
+                self.set_reg(*rd, res);
+                self.metrics.float_ops += 1;
+                self.pc = next_pc;
+            }
             Instruction::VAdd { rd, rs1, rs2, width } => {
                 let res = VectorUnit::vadd(&self.get_reg(*rs1), &self.get_reg(*rs2), *width);
                 self.set_reg(*rd, res);
@@ -847,6 +897,7 @@ impl Cpu {
         println!("║                                                                                  ║");
         println!("║  ┌─ Post-Quantum & Domain-Specific Units ─────────────────────────────────────┐  ║");
         println!("║  │ Vector SIMD (256-bit):       {:<14} Complex (Quantum): {:<14}│  ║", m.vector_ops, m.complex_ops);
+        println!("║  │ Packed f32 (8 lanes):        {:<14} Flops (f32 lanes): {:<14}│  ║", m.float_ops, m.float_ops * 8);
         println!("║  │ Lattice PQC (NTT/Poly):      {:<14} Neural Tensor:     {:<14}│  ║", m.lattice_ops, m.tensor_ops);
         println!("║  │ Information Theory (Entropy):{:<14} Memory Reads/Writes:{:<5}/{:<6}│  ║", m.info_ops, self.memory.reads, self.memory.writes);
         println!("║  └────────────────────────────────────────────────────────────────────────────┘  ║");

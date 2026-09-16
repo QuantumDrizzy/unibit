@@ -346,6 +346,72 @@ impl VectorUnit {
     }
 }
 
+/// Packed single-precision arithmetic over the eight 32-bit lanes.
+///
+/// The register model already said this was coming. `Width::B32` is documented as
+/// "8 lanes x 32-bit (AI training, fp32)" and `Reg256` has carried `f32_at`/`set_f32_at`
+/// since the tensor unit needed an accumulator -- but until now **eight floats fitted in a
+/// register and nothing in the ALU could add them.** `VADD` and friends are integer:
+/// `wrapping_add` over lanes. The only float arithmetic was the two-lane complex unit.
+///
+/// That was a gap on this ISA's own terms. Its claim is that the hardware understands types
+/// and not just widths: `Complex` has a type, `Poly` has a type, and `Vector` had integers of
+/// four widths and no float at all.
+///
+/// **No wrapping, and that is the point.** Integer lanes wrap; float lanes saturate to
+/// infinity and propagate NaN, because that is what IEEE 754 says and because a cost model
+/// that cannot tell an overflow from a wrap is a cost model about the wrong machine.
+pub struct FloatUnit;
+
+impl FloatUnit {
+    /// Lane-wise `a + b` as f32. Eight adds per instruction.
+    pub fn vfadd(a: &Reg256, b: &Reg256) -> Reg256 {
+        Self::zip(a, b, |x, y| x + y)
+    }
+
+    /// Lane-wise `a - b` as f32.
+    pub fn vfsub(a: &Reg256, b: &Reg256) -> Reg256 {
+        Self::zip(a, b, |x, y| x - y)
+    }
+
+    /// Lane-wise `a * b` as f32.
+    pub fn vfmul(a: &Reg256, b: &Reg256) -> Reg256 {
+        Self::zip(a, b, |x, y| x * y)
+    }
+
+    /// Lane-wise `a * b + c`, **fused**: one rounding, not two.
+    ///
+    /// `f32::mul_add` is the fused operation, and the distinction is not pedantry -- a
+    /// multiply-then-add rounds twice and gives a different answer, which over an accumulation
+    /// is a different function. An ISA that offers `VFMA` and implements it as two roundings
+    /// is lying about what it computes.
+    pub fn vfma(a: &Reg256, b: &Reg256, c: &Reg256) -> Reg256 {
+        let mut out = Reg256::ZERO;
+        for i in 0..8 {
+            out.set_f32_at(i, a.f32_at(i).mul_add(b.f32_at(i), c.f32_at(i)));
+        }
+        out
+    }
+
+    /// Lane-wise maximum, IEEE-style: a NaN in either operand yields the other.
+    pub fn vfmax(a: &Reg256, b: &Reg256) -> Reg256 {
+        Self::zip(a, b, f32::max)
+    }
+
+    /// Lane-wise minimum.
+    pub fn vfmin(a: &Reg256, b: &Reg256) -> Reg256 {
+        Self::zip(a, b, f32::min)
+    }
+
+    fn zip(a: &Reg256, b: &Reg256, f: impl Fn(f32, f32) -> f32) -> Reg256 {
+        let mut out = Reg256::ZERO;
+        for i in 0..8 {
+            out.set_f32_at(i, f(a.f32_at(i), b.f32_at(i)));
+        }
+        out
+    }
+}
+
 // ─── Complex Arithmetic Unit (Quantum-Native) ────────────────────────────────
 
 pub struct ComplexUnit;
