@@ -515,6 +515,12 @@ impl Cpu {
                 self.metrics.float_ops += 1;
                 self.pc = next_pc;
             }
+            Instruction::VfReduce { rd, rs1 } => {
+                let res = FloatUnit::vfreduce(&self.get_reg(*rs1));
+                self.set_reg(*rd, res);
+                self.metrics.float_ops += 1;
+                self.pc = next_pc;
+            }
             Instruction::VAdd { rd, rs1, rs2, width } => {
                 let res = VectorUnit::vadd(&self.get_reg(*rs1), &self.get_reg(*rs2), *width);
                 self.set_reg(*rd, res);

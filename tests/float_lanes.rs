@@ -121,11 +121,12 @@ _start:
         vfma    t0, t1, t2
         vfmax   t0, t1, t2
         vfmin   t0, t1, t2
+        vfreduce t0, t1
         halt
 ";
     let prog = Assembler::new()
         .assemble(src)
-        .expect("the six mnemonics assemble");
+        .expect("the seven mnemonics assemble");
     let names: Vec<&str> = prog
         .instructions
         .iter()
@@ -136,11 +137,131 @@ _start:
             Instruction::VfMa { .. } => "vfma",
             Instruction::VfMax { .. } => "vfmax",
             Instruction::VfMin { .. } => "vfmin",
+            Instruction::VfReduce { .. } => "vfreduce",
             _ => "other",
         })
         .collect();
     assert_eq!(
-        &names[..6],
-        &["vfadd", "vfsub", "vfmul", "vfma", "vfmax", "vfmin"]
+        &names[..7],
+        &["vfadd", "vfsub", "vfmul", "vfma", "vfmax", "vfmin", "vfreduce"]
     );
+}
+
+/// Sum the lanes left to right, the order `VREDUCE` uses for integers.
+fn sequential(v: [f32; 8]) -> f32 {
+    v.iter().fold(0.0f32, |a, x| a + x)
+}
+
+/// Sum the lanes in a tree: stride 4, then 2, then 1.
+fn tree(v: [f32; 8]) -> f32 {
+    let mut s = v;
+    let mut stride = 4;
+    while stride > 0 {
+        for t in 0..stride {
+            s[t] += s[t + stride];
+        }
+        stride /= 2;
+    }
+    s[0]
+}
+
+/// One large value and seven at half an ulp of it. Each small one is lost against the large
+/// one on its own, and two of them together are not -- so the two orders disagree by three
+/// ulps rather than by a last bit.
+const OBSERVABLE: [f32; 8] = [
+    1.0,
+    5.960_464_5e-8,
+    5.960_464_5e-8,
+    5.960_464_5e-8,
+    5.960_464_5e-8,
+    5.960_464_5e-8,
+    5.960_464_5e-8,
+    5.960_464_5e-8,
+];
+
+#[test]
+fn the_horizontal_sum_is_a_tree_and_that_is_observable() {
+    // The test would pass vacuously on any vector where the two orders agree, which is most of
+    // them, so it asserts that they disagree *first*.
+    assert_ne!(
+        sequential(OBSERVABLE).to_bits(),
+        tree(OBSERVABLE).to_bits(),
+        "this vector cannot tell the two orders apart, so it cannot test the choice"
+    );
+    assert_eq!(sequential(OBSERVABLE).to_bits(), 0x3F80_0000);
+    assert_eq!(tree(OBSERVABLE).to_bits(), 0x3F80_0003);
+
+    let got = FloatUnit::vfreduce(&packed(OBSERVABLE));
+    assert_eq!(
+        got.f32_at(0).to_bits(),
+        tree(OBSERVABLE).to_bits(),
+        "VFREDUCE is specified as a tree"
+    );
+}
+
+#[test]
+fn the_integer_reduce_never_had_that_choice_to_make() {
+    // Why `VFREDUCE` documents its order and `VREDUCE` beside it does not. `wrapping_add` is
+    // associative, so no vector of integers can tell a chain from a tree -- the order was
+    // never observable and so was never a decision. Float addition is not associative, and
+    // the instruction above had to pick.
+    let nasty: [u32; 8] = [
+        u32::MAX,
+        1,
+        u32::MAX / 2,
+        7,
+        0x8000_0000,
+        0xDEAD_BEEF,
+        3,
+        0xFFFF_FFFE,
+    ];
+    let seq = nasty.iter().fold(0u64, |a, x| a.wrapping_add(*x as u64));
+    let mut s: Vec<u64> = nasty.iter().map(|x| *x as u64).collect();
+    let mut stride = 4;
+    while stride > 0 {
+        for t in 0..stride {
+            s[t] = s[t].wrapping_add(s[t + stride]);
+        }
+        stride /= 2;
+    }
+    assert_eq!(seq, s[0], "integer lanes cannot distinguish the two orders");
+}
+
+#[test]
+fn only_lane_zero_carries_the_result() {
+    // Stated rather than left undefined. An undefined lane is one a program will eventually
+    // read, and it would read differently on the next implementation.
+    let r = FloatUnit::vfreduce(&packed([1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 128.0]));
+    assert_eq!(lanes(&r), [255.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
+}
+
+#[test]
+fn it_reduces_through_the_whole_machine() {
+    // Assembler, encoder, decoder and CPU, not just the ALU -- the path a LYTH program takes.
+    use unibit::binary::{self, Object};
+    use unibit::cpu::Cpu;
+
+    let src = "        .text
+        .global _start
+_start:
+        li      t0, 0x40400000
+        vsplat.w t0, t0
+        vfreduce t1, t0
+        halt
+";
+    let prog = Assembler::new().assemble(src).expect("assembles");
+    let bytes = binary::write_object(&Object {
+        entry_point: prog.entry_point,
+        code: prog.instructions,
+        data: prog.data_segment,
+    });
+    let obj = binary::read_object(&bytes).expect("round-trips");
+
+    let mut cpu = Cpu::new(1024 * 1024);
+    cpu.reset(obj.entry_point);
+    cpu.run_program(&obj.code, 1_000).expect("runs");
+
+    // Eight lanes of 3.0. The sum is exact in either order, which is what this test wants:
+    // it is checking the plumbing, and `the_horizontal_sum_is_a_tree` checks the order.
+    assert_eq!(cpu.get_reg(6).f32_at(0), 24.0);
 }

@@ -138,6 +138,7 @@ pub mod op {
     pub const VFMA:      u8 = 87;
     pub const VFMAX:     u8 = 88;
     pub const VFMIN:     u8 = 89;
+    pub const VFREDUCE:  u8 = 90;
     pub const ECALL:     u8 = 75;
     pub const HALT:      u8 = 76;
     pub const NOP:       u8 = 77;
@@ -265,6 +266,7 @@ pub fn encode_instruction(inst: &Instruction) -> [u8; INSTRUCTION_BYTES] {
         Instruction::VfMa  { rd, rs1, rs2 } => Fields { op: op::VFMA,  rd: *rd, rs1: *rs1, rs2: *rs2, aux: 0, imm: 0 },
         Instruction::VfMax { rd, rs1, rs2 } => Fields { op: op::VFMAX, rd: *rd, rs1: *rs1, rs2: *rs2, aux: 0, imm: 0 },
         Instruction::VfMin { rd, rs1, rs2 } => Fields { op: op::VFMIN, rd: *rd, rs1: *rs1, rs2: *rs2, aux: 0, imm: 0 },
+        Instruction::VfReduce { rd, rs1 } => Fields { op: op::VFREDUCE, rd: *rd, rs1: *rs1, rs2: 0, aux: 0, imm: 0 },
         Instruction::VSub { rd, rs1, rs2, width } => Fields { op: op::VSUB, rd: *rd, rs1: *rs1, rs2: *rs2, aux: width_code(*width), imm: 0 },
         Instruction::VMul { rd, rs1, rs2, width } => Fields { op: op::VMUL, rd: *rd, rs1: *rs1, rs2: *rs2, aux: width_code(*width), imm: 0 },
         Instruction::VDot { rd, rs1, rs2, width } => Fields { op: op::VDOT, rd: *rd, rs1: *rs1, rs2: *rs2, aux: width_code(*width), imm: 0 },
@@ -386,6 +388,7 @@ pub fn decode_instruction(bytes: &[u8]) -> Result<Instruction, String> {
         op::VFMA  => Instruction::VfMa  { rd: f.rd, rs1: f.rs1, rs2: f.rs2 },
         op::VFMAX => Instruction::VfMax { rd: f.rd, rs1: f.rs1, rs2: f.rs2 },
         op::VFMIN => Instruction::VfMin { rd: f.rd, rs1: f.rs1, rs2: f.rs2 },
+        op::VFREDUCE => Instruction::VfReduce { rd: f.rd, rs1: f.rs1 },
         op::VSUB => Instruction::VSub { rd: f.rd, rs1: f.rs1, rs2: f.rs2, width: width_from_code(f.aux)? },
         op::VMUL => Instruction::VMul { rd: f.rd, rs1: f.rs1, rs2: f.rs2, width: width_from_code(f.aux)? },
         op::VDOT => Instruction::VDot { rd: f.rd, rs1: f.rs1, rs2: f.rs2, width: width_from_code(f.aux)? },
@@ -590,6 +593,17 @@ mod tests {
             Instruction::VNot { rd: 9, rs1: 10 },
             Instruction::VSplat { rd: 15, rs1: 16, width: Width::B32 },
             Instruction::VReduce { rd: 15, rs1: 16, width: Width::B32 },
+            // The packed-float set. Step 0 of LYTH's ADR-0025 added six of these and none of
+            // them reached this list, so their encoding was never round-tripped -- an opcode
+            // typo in `decode` would have been found by a LYTH program failing to verify
+            // rather than by the table that exists to find it.
+            Instruction::VfAdd { rd: 5, rs1: 6, rs2: 7 },
+            Instruction::VfSub { rd: 5, rs1: 6, rs2: 7 },
+            Instruction::VfMul { rd: 5, rs1: 6, rs2: 7 },
+            Instruction::VfMa { rd: 5, rs1: 6, rs2: 7 },
+            Instruction::VfMax { rd: 5, rs1: 6, rs2: 7 },
+            Instruction::VfMin { rd: 5, rs1: 6, rs2: 7 },
+            Instruction::VfReduce { rd: 15, rs1: 16 },
             Instruction::Zipper { rd: 1, rs1: 2, rs2: 3 },
             Instruction::Zipper2 { rd: 4, rs1: 5, rs2: 6 },
             Instruction::Trunc { rd: 19, rs1: 20, eps_bits: 0xDEAD_BEEF_CAFE_F00D },

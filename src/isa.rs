@@ -449,6 +449,16 @@ pub enum Instruction {
     VfMa   { rd: u8, rs1: u8, rs2: u8 },
     VfMax  { rd: u8, rs1: u8, rs2: u8 },
     VfMin  { rd: u8, rs1: u8, rs2: u8 },
+    /// Horizontal sum of the eight f32 lanes into lane 0, as a **tree**: pairs at stride 4,
+    /// then 2, then 1.
+    ///
+    /// The order is part of the instruction, not an implementation detail. `VREDUCE` beside it
+    /// sums integers with `wrapping_add`, which is associative, so its order was never
+    /// observable and was therefore never a decision. Float addition is not associative: a
+    /// sequential chain and a tree give different bit patterns over the same lanes, so this
+    /// instruction has to say which one it is. A tree is also what the hardware would be --
+    /// three layers of adders, not a chain of eight.
+    VfReduce { rd: u8, rs1: u8 },
     VSub   { rd: u8, rs1: u8, rs2: u8, width: Width },
     VMul   { rd: u8, rs1: u8, rs2: u8, width: Width },
     VAnd   { rd: u8, rs1: u8, rs2: u8 },  // bitwise across full 256-bit

@@ -372,6 +372,7 @@ impl Assembler {
             "vfma"  => Ok(Instruction::VfMa  { rd: parse_reg(0, "vfma")?,  rs1: parse_reg(1, "vfma")?,  rs2: parse_reg(2, "vfma")?  }),
             "vfmax" => Ok(Instruction::VfMax { rd: parse_reg(0, "vfmax")?, rs1: parse_reg(1, "vfmax")?, rs2: parse_reg(2, "vfmax")? }),
             "vfmin" => Ok(Instruction::VfMin { rd: parse_reg(0, "vfmin")?, rs1: parse_reg(1, "vfmin")?, rs2: parse_reg(2, "vfmin")? }),
+            "vfreduce" => Ok(Instruction::VfReduce { rd: parse_reg(0, "vfreduce")?, rs1: parse_reg(1, "vfreduce")? }),
 
             // ─── Vector SIMD Instructions ────────────────────────────────────
             "vadd" | "vadd.b" | "vadd.h" | "vadd.w" | "vadd.d" => {

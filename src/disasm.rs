@@ -237,6 +237,7 @@ fn format_instruction(inst: &Instruction, pc: u64, symbols: &HashMap<u64, String
         Instruction::VfMa  { rd, rs1, rs2 } => format!("vfma    {}, {}, {}", reg_name(*rd), reg_name(*rs1), reg_name(*rs2)),
         Instruction::VfMax { rd, rs1, rs2 } => format!("vfmax   {}, {}, {}", reg_name(*rd), reg_name(*rs1), reg_name(*rs2)),
         Instruction::VfMin { rd, rs1, rs2 } => format!("vfmin   {}, {}, {}", reg_name(*rd), reg_name(*rs1), reg_name(*rs2)),
+        Instruction::VfReduce { rd, rs1 } => format!("vfreduce {}, {}", reg_name(*rd), reg_name(*rs1)),
         Instruction::VSub { rd, rs1, rs2, width } => format!("vsub{}   {}, {}, {}", width, reg_name(*rd), reg_name(*rs1), reg_name(*rs2)),
         Instruction::VMul { rd, rs1, rs2, width } => format!("vmul{}   {}, {}, {}", width, reg_name(*rd), reg_name(*rs1), reg_name(*rs2)),
         Instruction::VAnd { rd, rs1, rs2 } => format!("vand     {}, {}, {}", reg_name(*rd), reg_name(*rs1), reg_name(*rs2)),

@@ -403,6 +403,27 @@ impl FloatUnit {
         Self::zip(a, b, f32::min)
     }
 
+    /// Horizontal sum of the eight lanes into lane 0, the remaining lanes zeroed.
+    ///
+    /// **A tree, deliberately**: stride 4, then 2, then 1. See `Instruction::VfReduce` for why
+    /// the order is specified here and is not specified for the integer `VREDUCE`.
+    pub fn vfreduce(a: &Reg256) -> Reg256 {
+        let mut s = [0.0f32; 8];
+        for (i, v) in s.iter_mut().enumerate() {
+            *v = a.f32_at(i);
+        }
+        let mut stride = 4;
+        while stride > 0 {
+            for t in 0..stride {
+                s[t] += s[t + stride];
+            }
+            stride /= 2;
+        }
+        let mut out = Reg256::ZERO;
+        out.set_f32_at(0, s[0]);
+        out
+    }
+
     fn zip(a: &Reg256, b: &Reg256, f: impl Fn(f32, f32) -> f32) -> Reg256 {
         let mut out = Reg256::ZERO;
         for i in 0..8 {
